@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
-import multer from 'multer';
 import { getEnvironmentConfig } from './config/environment.js';
 import { createDatabaseConnection } from './config/database.js';
 import { createLogger, createRequestLogger, addCorrelationId } from './config/logger.js';
@@ -10,6 +9,7 @@ import { performStartupValidation } from './config/startup.js';
 import { createAuthRepository } from './auth/auth.repositories.js';
 import { createAuthService } from './auth/auth.services.js';
 import { createAuthHandlers } from './auth/auth.handlers.js';
+import { createAuthRoutes } from './auth/auth.routes.js';
 import { createJwtUtils } from './shared/utils/jwt.js';
 import { createPasswordUtils } from './shared/utils/password.js';
 import { createLearningRepository } from './learning/learning.repositories.js';
@@ -23,27 +23,10 @@ import { createIDPRoutes } from './idp/idp.routes.js';
 import { createDocumentRepository } from './documents/documents.repositories.js';
 import { createDocumentService } from './documents/documents.services.js';
 import { createDocumentHandlers } from './documents/documents.handlers.js';
+import { createDocumentRoutes } from './documents/documents.routes.js';
 import { createR2Client } from './shared/utils/r2.js';
 import { createOpenRouterClient } from './shared/utils/openrouter.js';
 import { createErrorHandler, createNotFoundHandler } from './shared/middleware/error.middleware.js';
-import { validateBody, validateParams, validateQuery } from './shared/middleware/validation.middleware.js';
-import { 
-  registerSchema, 
-  loginSchema, 
-  refreshTokenSchema,
-  changePasswordSchema,
-  updateProfileSchema,
-  deactivateAccountSchema,
-  assignManagerSchema,
-  updateUserRoleSchema,
-  userIdParamsSchema
-} from './auth/auth.schemas.js';
-import { 
-  createDocumentSchema,
-  updateDocumentSchema,
-  documentsQuerySchema,
-  documentIdParamsSchema
-} from './documents/documents.schemas.js';
 
 export async function createApp() {
   const config = getEnvironmentConfig();
@@ -129,12 +112,6 @@ export async function createApp() {
   // Create Express app
   const app = express();
   
-  // Multer configuration for file uploads
-  const upload = multer({ 
-    storage: multer.memoryStorage(),
-    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
-  });
-  
   // Global middleware
   app.use(helmet());
   app.use(cors());
@@ -154,59 +131,10 @@ export async function createApp() {
   });
   
   // Authentication routes
-  app.post('/auth/register', validateBody(registerSchema), authHandlers.registerUser);
-  app.post('/auth/login', validateBody(loginSchema), authHandlers.loginUser);
-  app.post('/auth/refresh', validateBody(refreshTokenSchema), authHandlers.refreshToken);
+  app.use('/auth', createAuthRoutes(authHandlers));
   
-  // Protected user routes (these would normally require authentication middleware)
-  app.put('/auth/users/:userId/password', 
-    validateParams(userIdParamsSchema), 
-    validateBody(changePasswordSchema), 
-    authHandlers.changePassword
-  );
-  
-  app.put('/auth/users/:userId/profile', 
-    validateParams(userIdParamsSchema), 
-    validateBody(updateProfileSchema), 
-    authHandlers.updateProfile
-  );
-  
-  app.get('/auth/users/:userId/profile', 
-    validateParams(userIdParamsSchema), 
-    authHandlers.getUserProfile
-  );
-  
-  app.delete('/auth/users/:userId', 
-    validateParams(userIdParamsSchema), 
-    validateBody(deactivateAccountSchema), 
-    authHandlers.deactivateAccount
-  );
-  
-  // Manager routes
-  app.put('/auth/users/:userId/manager', 
-    validateParams(userIdParamsSchema), 
-    validateBody(assignManagerSchema), 
-    authHandlers.assignManager
-  );
-  
-  app.get('/auth/managers/:managerId/users', 
-    validateParams(userIdParamsSchema), 
-    authHandlers.getUsersByManager
-  );
-  
-  app.put('/auth/users/:userId/role', 
-    validateParams(userIdParamsSchema), 
-    validateBody(updateUserRoleSchema), 
-    authHandlers.updateUserRole
-  );
-  
-  // Document endpoints
-  app.post('/api/documents', upload.single('file'), validateBody(createDocumentSchema), documentHandlers.uploadDocument);
-  app.get('/api/documents', validateQuery(documentsQuerySchema), documentHandlers.getDocuments);
-  app.get('/api/documents/:documentId', validateParams(documentIdParamsSchema), documentHandlers.getDocument);
-  app.put('/api/documents/:documentId', validateParams(documentIdParamsSchema), validateBody(updateDocumentSchema), documentHandlers.updateDocument);
-  app.delete('/api/documents/:documentId', validateParams(documentIdParamsSchema), documentHandlers.deleteDocument);
-  app.get('/api/documents/:documentId/content', validateParams(documentIdParamsSchema), documentHandlers.getDocumentContent);
+  // Document routes
+  app.use('/api/documents', createDocumentRoutes(documentHandlers));
 
   // Learning routes
   app.use('/api/learning', createLearningRoutes(learningHandlers));
