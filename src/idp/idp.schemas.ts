@@ -24,6 +24,9 @@ const jobCompetencyFrameworkSchema = z.object({
 
 // Employee Data Schema (Dokumen 2)
 const employeeDataSchema = z.object({
+  employeeId: z.string()
+    .uuid('Employee ID must be a valid UUID')
+    .optional(),
   employeeName: z.string()
     .min(2, 'Employee name must be at least 2 characters')
     .max(100, 'Employee name must not exceed 100 characters')
@@ -50,7 +53,6 @@ const employeeDataSchema = z.object({
       score: z.number().min(0, 'Score must be at least 0').max(100, 'Score must not exceed 100'),
     })).optional(),
   }),
-  employeeId: z.string().uuid('Employee ID must be a valid UUID').optional(),
 });
 
 // Gap Analysis Input Schema

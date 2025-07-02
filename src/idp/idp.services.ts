@@ -2,6 +2,7 @@ import type { Logger } from 'pino';
 import { Worker } from 'worker_threads';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 import type { IDPRepository, CompetencyGapRecord, DevelopmentProgramRecord, IndividualDevelopmentPlanRecord } from './idp.repositories.js';
 import type { 
   JobCompetencyFrameworkData, 
@@ -16,6 +17,28 @@ import { createBusinessLogicError, createNotFoundError } from '../shared/middlew
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Helper function to resolve worker path
+function resolveWorkerPath(workerName: string): string {
+  // Try different possible paths for the worker
+  const possiblePaths = [
+    // Production build (compiled)
+    path.join(__dirname, '..', 'workers', `${workerName}.worker.js`),
+    path.join(process.cwd(), 'dist', 'workers', `${workerName}.worker.js`),
+    // Development with ts-node
+    path.join(__dirname, '..', 'workers', `${workerName}.worker.ts`),
+    path.join(process.cwd(), 'src', 'workers', `${workerName}.worker.ts`),
+  ];
+
+  for (const workerPath of possiblePaths) {
+    if (fs.existsSync(workerPath)) {
+      return workerPath;
+    }
+  }
+
+  // Fallback - assume production build
+  return path.join(__dirname, '..', 'workers', `${workerName}.worker.js`);
+}
 
 export type GapAnalysisResult = {
   analysisId: string;
@@ -94,10 +117,7 @@ export function createIDPService(
       }, 'Starting competency gap analysis');
 
       // Dynamically determine worker path for both dev (ts) and prod (js)
-      const isDev = __filename.endsWith('.ts');
-      const workerPath = isDev
-        ? path.join(__dirname, '../../dist/workers/idp.worker.js')
-        : path.join(__dirname, '../workers/idp.worker.js');
+      const workerPath = resolveWorkerPath('idp');
 
       // Start worker for AI processing
       const worker = new Worker(workerPath, {
@@ -314,7 +334,7 @@ export function createIDPService(
       }
 
       // Start worker for AI processing
-      const workerPath = path.join(__dirname, '../workers/idp.worker.js');
+      const workerPath = resolveWorkerPath('idp');
       const worker = new Worker(workerPath, {
         workerData: { 
           type: 'idp-generation',
@@ -347,7 +367,7 @@ export function createIDPService(
           } else {
             try {
               // Prepare IDP data for storage
-              const idpData: IndividualDevelopmentPlanData = {
+              let idpData: IndividualDevelopmentPlanData = {
                 ...message.data,
                 gapAnalysisId: gapAnalysis.id,
                 createdBy: userId,
@@ -358,9 +378,49 @@ export function createIDPService(
               // Map program names to actual program IDs
               for (const goal of idpData.developmentGoals) {
                 for (const program of goal.programs) {
-                  const matchingProgram = developmentPrograms.find(p => p.data.name === program.programName);
+                  // Try exact match first
+                  let matchingProgram = developmentPrograms.find(p => 
+                    p.data.name.toLowerCase() === program.programName.toLowerCase()
+                  );
+                  
+                  // If no exact match, try partial match
+                  if (!matchingProgram) {
+                    matchingProgram = developmentPrograms.find(p => 
+                      p.data.name.toLowerCase().includes(program.programName.toLowerCase()) ||
+                      program.programName.toLowerCase().includes(p.data.name.toLowerCase())
+                    );
+                  }
+                  
+                  // If still no match, try by target competencies
+                  if (!matchingProgram) {
+                    matchingProgram = developmentPrograms.find(p => 
+                      p.data.targetCompetencies.some(comp => 
+                        comp.toLowerCase() === goal.competency.toLowerCase()
+                      )
+                    );
+                  }
+                  
                   if (matchingProgram) {
                     program.programId = matchingProgram.id;
+                    // Update program name to match database
+                    program.programName = matchingProgram.data.name;
+                    program.type = matchingProgram.data.type;
+                    
+                    logger.info({ 
+                      originalName: program.programName,
+                      mappedId: matchingProgram.id,
+                      mappedName: matchingProgram.data.name
+                    }, 'Successfully mapped program to database UUID');
+                  } else {
+                    // If no match found, create a placeholder and log warning
+                    logger.warn({ 
+                      programName: program.programName,
+                      availablePrograms: developmentPrograms.map(p => p.data.name)
+                    }, 'Could not map AI-suggested program to database program');
+                    
+                    // Set a placeholder ID - this will cause validation error
+                    // Better to fail fast than have inconsistent data
+                    program.programId = 'UNMAPPED_PROGRAM_' + program.programName.replace(/\s+/g, '_');
                   }
                 }
               }
@@ -371,7 +431,10 @@ export function createIDPService(
               logger.info({ 
                 userId, 
                 idpId: newIDP.id,
-                employeeId 
+                employeeId,
+                mappedPrograms: idpData.developmentGoals.reduce((acc, goal) => 
+                  acc + goal.programs.filter(p => p.programId && !p.programId.startsWith('UNMAPPED')).length, 0
+                )
               }, 'IDP generated successfully');
 
               resolve({

@@ -41,6 +41,7 @@
     "jsonwebtoken": "^9.0.2",
     "mammoth": "^1.9.1",
     "multer": "^2.0.1",
+    "node-fetch": "^3.3.2",
     "openai": "^5.8.2",
     "opossum": "^9.0.0",
     "p-retry": "^6.2.1",
