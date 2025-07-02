@@ -15,6 +15,10 @@ import { createLearningRepository } from './learning/learning.repositories.js';
 import { createLearningService } from './learning/learning.services.js';
 import { createLearningHandlers } from './learning/learning.handlers.js';
 import { createLearningRoutes } from './learning/learning.routes.js';
+import { createIDPRepository } from './idp/idp.repositories.js';
+import { createIDPService } from './idp/idp.services.js';
+import { createIDPHandlers } from './idp/idp.handlers.js';
+import { createIDPRoutes } from './idp/idp.routes.js';
 import { createR2Client } from './shared/utils/r2.js';
 import { createOpenRouterClient } from './shared/utils/openrouter.js';
 import { createErrorHandler, createNotFoundHandler } from './shared/middleware/error.middleware.js';
@@ -74,6 +78,7 @@ export async function createApp() {
   // Create repositories
   const authRepository = createAuthRepository(db, logger);
   const learningRepository = createLearningRepository(db, logger);
+  const idpRepository = createIDPRepository(db, logger);
   
   // Create services
   const authService = createAuthService({
@@ -88,6 +93,7 @@ export async function createApp() {
     openRouterClient,
     logger
   );
+  const idpService = createIDPService(idpRepository, logger);
   
   // Create handlers
   const authHandlers = createAuthHandlers({
@@ -96,6 +102,10 @@ export async function createApp() {
   });
   const learningHandlers = createLearningHandlers({
     learningService,
+    logger,
+  });
+  const idpHandlers = createIDPHandlers({
+    idpService,
     logger,
   });
   
@@ -170,6 +180,9 @@ export async function createApp() {
   // Learning routes
   app.use('/api/learning', createLearningRoutes(learningHandlers));
   
+  // IDP routes
+  app.use('/api/idp', createIDPRoutes(idpHandlers));
+  
   // Error handling middleware (must be last)
   app.use(createNotFoundHandler());
   app.use(createErrorHandler(logger, config.NODE_ENV === 'development'));
@@ -184,10 +197,12 @@ export async function createApp() {
     services: {
       authService,
       learningService,
+      idpService,
     },
     handlers: {
       authHandlers,
       learningHandlers,
+      idpHandlers,
     },
     healthStatus: validationResult,
   };

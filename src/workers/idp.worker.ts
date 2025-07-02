@@ -80,8 +80,8 @@ const openai = new OpenAI({
 });
 
 const resilientAIProcessing = withResilience(
-  async (prompt: string, taskType: string) => {
-    logger.info({ taskType }, 'Sending IDP request to OpenRouter for processing');
+  async (prompt: string) => {
+    logger.info({ taskType: 'generic-ai-prompt' }, 'Sending IDP request to OpenRouter for processing');
     
     const completion = await openai.chat.completions.create({
       model: "google/gemini-2.5-flash",
@@ -100,105 +100,41 @@ const resilientAIProcessing = withResilience(
       throw new Error('No content returned from OpenRouter');
     }
 
-    return { success: true, data: content };
+    return content; // Return raw string content
+  },
+  resilienceConfig,
+  logger
+);
+
+const resilientGapAnalysisProcessing = withResilience(
+  (frameworkData: JobCompetencyFrameworkData, employeeData: EmployeeData) => {
+    const files = [
+      {
+        fileName: `framework-${frameworkData.jobTitle.replace(/\s+/g, '_')}.json`,
+        fileBuffer: Buffer.from(JSON.stringify(frameworkData, null, 2)),
+      },
+      {
+        fileName: `employee-${employeeData.employeeName.replace(/\s+/g, '_')}.json`,
+        fileBuffer: Buffer.from(JSON.stringify(employeeData, null, 2)),
+      },
+    ];
+    return openRouterClient.generateGapAnalysisFromFiles(files);
   },
   resilienceConfig,
   logger
 );
 
 async function processGapAnalysis(data: GapAnalysisWorkerData) {
-  const { frameworkData, employeeData, userId } = data;
+  const { frameworkData, employeeData } = data;
   
-  const prompt = `Anda adalah seorang analis HR ahli yang berpengalaman dalam analisis kesenjangan kompetensi. Berdasarkan data berikut, lakukan analisis kesenjangan (gap analysis) yang mendalam dan komprehensif.
-
-**KERANGKA KOMPETENSI JABATAN:**
-Jabatan: ${frameworkData.jobTitle}
-
-Kompetensi Manajerial yang Dibutuhkan:
-${frameworkData.managerialCompetencies.map(comp => 
-  `- ${comp.name}: Level ${comp.expectedLevel}${comp.description ? ` (${comp.description})` : ''}`
-).join('\n')}
-
-Kompetensi Fungsional yang Dibutuhkan:
-${frameworkData.functionalCompetencies.map(comp => 
-  `- ${comp.name}: Level ${comp.expectedLevel}${comp.description ? ` (${comp.description})` : ''}`
-).join('\n')}
-
-**DATA KARYAWAN:**
-Nama: ${employeeData.employeeName}
-Jabatan Saat Ini: ${employeeData.currentJobTitle}
-Skor KPI: ${employeeData.kpiScore}/100
-Skor Potensi: ${employeeData.assessmentResults.potentialScore}/100
-
-Ringkasan Kinerja:
-${employeeData.performanceSummary}
-
-Ringkasan Asesmen:
-${employeeData.assessmentResults.summary}
-
-${employeeData.assessmentResults.competencyScores ? 
-  `Skor Kompetensi Spesifik:\n${employeeData.assessmentResults.competencyScores.map(score => 
-    `- ${score.competencyName}: ${score.score}/100`
-  ).join('\n')}` : ''}
-
-**INSTRUKSI ANALISIS:**
-1. Bandingkan level kompetensi yang dibutuhkan dengan kondisi aktual karyawan
-2. Identifikasi kesenjangan pada setiap kompetensi (managerial dan functional)
-3. Tentukan tingkat kesenjangan: 0 = tidak ada gap, 1 = gap minor, 2 = gap major
-4. Tentukan prioritas pengembangan: Low, Medium, atau High
-5. Berikan rekomendasi pengembangan umum
-6. Hitung overall gap score (0-100, dimana 100 = gap sangat besar)
-
-**FORMAT OUTPUT:** Berikan hasil dalam format JSON yang valid dengan struktur berikut:
-
-{
-  "employeeId": "${employeeData.employeeName.toLowerCase().replace(/\s+/g, '-')}-001",
-  "employeeName": "${employeeData.employeeName}",
-  "jobTitle": "${frameworkData.jobTitle}",
-  "analysisDate": "${new Date().toISOString().split('T')[0]}",
-  "gaps": [
-    {
-      "competency": "Nama Kompetensi",
-      "category": "managerial" | "functional",
-      "requiredLevel": "Basic" | "Intermediate" | "Advanced",
-      "currentLevel": "Basic" | "Intermediate" | "Advanced",
-      "gapLevel": 0 | 1 | 2,
-      "description": "Penjelasan detail tentang kesenjangan",
-      "priority": "Low" | "Medium" | "High"
-    }
-  ],
-  "overallGapScore": 0-100,
-  "recommendations": [
-    "Rekomendasi pengembangan 1",
-    "Rekomendasi pengembangan 2"
-  ]
-}
-
-Pastikan JSON output valid dan dapat di-parse. Berikan analisis yang objektif dan konstruktif.
-
-ONLY OUTPUT THE JSON OBJECT, WITHOUT ANY ADDITIONAL EXPLANATION, MARKDOWN, OR CODE FENCES.
-`;
-
-  const result = await resilientAIProcessing(prompt, 'gap-analysis');
+  const result = await resilientGapAnalysisProcessing('gap-analysis', frameworkData, employeeData);
   
   if (!result.success) {
     throw result.error || new Error('Gap analysis AI processing failed');
   }
 
-  try {
-    // Parse the JSON response
-    const gapAnalysis = JSON.parse(result.data);
-    
-    // Validate the structure
-    if (!gapAnalysis.gaps || !Array.isArray(gapAnalysis.gaps)) {
-      throw new Error('Invalid gap analysis response structure');
-    }
-
-    return gapAnalysis;
-  } catch (error) {
-    logger.error({ error, response: result.data }, 'Failed to parse gap analysis JSON response');
-    throw new Error('Invalid JSON response from AI for gap analysis');
-  }
+  // The new function returns pre-parsed JSON, so we just return it
+  return result.data;
 }
 
 async function processIDPGeneration(data: IDPGenerationWorkerData) {
@@ -279,17 +215,15 @@ ${developmentPrograms.map(program =>
 
 Pastikan IDP realistis, terukur, dan sesuai dengan klasifikasi 9-Box karyawan. Gunakan program dari katalog yang tersedia.`;
 
-  const result = await resilientAIProcessing(prompt, 'idp-generation');
+  const result = await resilientAIProcessing('idp-generation', prompt);
   
   if (!result.success) {
     throw result.error || new Error('IDP generation AI processing failed');
   }
 
   try {
-    // Parse the JSON response
     const idpPlan = JSON.parse(result.data);
     
-    // Validate the structure
     if (!idpPlan.developmentGoals || !Array.isArray(idpPlan.developmentGoals)) {
       throw new Error('Invalid IDP response structure');
     }
@@ -354,17 +288,15 @@ ${JSON.stringify(currentAnalysis, null, 2)}
   }
 }`;
 
-  const result = await resilientAIProcessing(prompt, 'impact-measurement');
+  const result = await resilientAIProcessing('impact-measurement', prompt);
   
   if (!result.success) {
     throw result.error || new Error('Impact measurement AI processing failed');
   }
 
   try {
-    // Parse the JSON response
     const impactReport = JSON.parse(result.data);
     
-    // Validate the structure
     if (!impactReport.overallImpact || !impactReport.competencyImpacts) {
       throw new Error('Invalid impact measurement response structure');
     }

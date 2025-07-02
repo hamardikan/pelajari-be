@@ -93,8 +93,13 @@ export function createIDPService(
         userId 
       }, 'Starting competency gap analysis');
 
+      // Dynamically determine worker path for both dev (ts) and prod (js)
+      const isDev = __filename.endsWith('.ts');
+      const workerPath = isDev
+        ? path.join(__dirname, '../../dist/workers/idp.worker.js')
+        : path.join(__dirname, '../workers/idp.worker.js');
+
       // Start worker for AI processing
-      const workerPath = path.join(__dirname, '../workers/idp.worker.js');
       const worker = new Worker(workerPath, {
         workerData: { 
           type: 'gap-analysis',
