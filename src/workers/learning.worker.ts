@@ -2,6 +2,7 @@ import { parentPort, workerData } from 'worker_threads';
 import { createOpenRouterClient } from '../shared/utils/openrouter.js';
 import { createLogger } from '../config/logger.js';
 import { getEnvironmentConfig } from '../config/environment.js';
+import { withResilience, createResilienceConfig } from '../shared/utils/resilience.js';
 
 // Worker data structure
 interface WorkerData {
@@ -19,6 +20,36 @@ const openRouterClient = createOpenRouterClient({
   siteName: config.SITE_NAME,
 }, logger);
 
+const resilienceConfig = createResilienceConfig({
+  retry: {
+    retries: 3,
+    factor: 2,
+    minTimeout: 2000,
+    maxTimeout: 30000,
+    randomize: true,
+  },
+  circuitBreaker: {
+    timeout: 120000, // 2 minutes for AI processing
+    errorThresholdPercentage: 50,
+    resetTimeout: 60000,
+    minimumHalfOpenRequests: 1,
+    name: 'ai-processing',
+  },
+  deadLetterQueue: {
+    enabled: false,
+    maxRetries: 3,
+  },
+});
+
+const resilientAIProcessing = withResilience(
+  async (bufferData: Buffer, name: string) => {
+    logger.info({ fileName: name, size: bufferData.length }, 'Sending PDF to OpenRouter for processing');
+    return openRouterClient.generateLearningModuleFromPDF(bufferData, name);
+  },
+  resilienceConfig,
+  logger
+);
+
 async function processDocument() {
   try {
     const { pdfBuffer, fileName, userId } = workerData as WorkerData;
@@ -32,17 +63,34 @@ async function processDocument() {
     // Convert the buffer from array to Buffer if needed
     const buffer = Buffer.isBuffer(pdfBuffer) ? pdfBuffer : Buffer.from(pdfBuffer);
 
-    const content = await openRouterClient.generateLearningModuleFromPDF(buffer, fileName);
-    
-    logger.info({ 
-      fileName, 
-      userId, 
-      title: content.title,
-      flashcardsCount: content.flashcards.length,
-      assessmentCount: content.assessment.length,
-      evaluationCount: content.evaluation.length
-    }, 'Worker completed PDF processing successfully');
-    
+    // Perform AI processing with resilience wrappers
+    const result = await resilientAIProcessing('generate-learning-module', buffer, fileName);
+
+    if (!result.success) {
+      throw result.error || new Error('AI processing failed after retries');
+    }
+
+    const content = result.data;
+
+    // Validate structure and counts
+    if (!content || !content.title || !content.summary || !content.flashcards || !content.assessment || !content.evaluation) {
+      throw new Error('Invalid AI response structure - missing required fields');
+    }
+
+    if (content.flashcards.length !== 10) {
+      throw new Error(`Expected 10 flashcards, got ${content.flashcards.length}`);
+    }
+
+    if (content.assessment.length !== 10) {
+      throw new Error(`Expected 10 assessment questions, got ${content.assessment.length}`);
+    }
+
+    if (content.evaluation.length !== 10) {
+      throw new Error(`Expected 10 evaluation questions, got ${content.evaluation.length}`);
+    }
+
+    logger.info({ fileName, userId, title: content.title }, 'AI processing completed successfully');
+
     parentPort?.postMessage({ content });
   } catch (error) {
     logger.error({ 

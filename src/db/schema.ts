@@ -64,6 +64,30 @@ export const deadLetterQueue = pgTable('dead_letter_queue', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
+// Competency gaps table - stores AI gap analysis results
+export const competencyGaps = pgTable('competency_gaps', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  data: jsonb('data').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+// Development programs table - stores catalog of available development programs
+export const developmentPrograms = pgTable('development_programs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  data: jsonb('data').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+// Individual development plans table - stores AI-generated IDP documents
+export const individualDevelopmentPlans = pgTable('individual_development_plans', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  data: jsonb('data').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
 // Type definitions for the data structure
 export type UserData = {
   email: string;
@@ -78,6 +102,7 @@ export type UserData = {
     bio?: string;
     skills: string[];
     goals: string[];
+    nineBoxClassification?: 'Low Performer' | 'Inconsistent Performer' | 'High Performer' | 'Emerging Talent' | 'Core Player' | 'High Professional' | 'Rising Star' | 'Key Player' | 'Top Talent';
   };
 };
 
@@ -241,4 +266,84 @@ export type DeadLetterQueueData = {
   maxRetries: number;
   nextRetryAt?: string;
   status: 'pending' | 'processing' | 'failed' | 'success';
+};
+
+// IDP-related type definitions
+export type CompetencyGapData = {
+  employeeId: string;
+  employeeName: string;
+  jobTitle: string;
+  analysisDate: string;
+  gaps: Array<{
+    competency: string;
+    category: 'managerial' | 'functional';
+    requiredLevel: 'Basic' | 'Intermediate' | 'Advanced';
+    currentLevel: 'Basic' | 'Intermediate' | 'Advanced';
+    gapLevel: number; // 0 = no gap, 1 = minor, 2 = major
+    description: string;
+    priority: 'Low' | 'Medium' | 'High';
+  }>;
+  nineBoxClassification?: 'Low Performer' | 'Inconsistent Performer' | 'High Performer' | 'Emerging Talent' | 'Core Player' | 'High Professional' | 'Rising Star' | 'Key Player' | 'Top Talent';
+  overallGapScore: number;
+  recommendations: string[];
+  createdBy: string;
+};
+
+export type DevelopmentProgramData = {
+  name: string;
+  type: 'Coaching' | 'Mentoring' | 'Training' | 'Job Rotation' | 'Special Assignment' | 'Online Course';
+  description: string;
+  duration: string;
+  targetCompetencies: string[];
+  provider?: string;
+  cost?: number;
+  prerequisites?: string[];
+  difficulty: 'Beginner' | 'Intermediate' | 'Advanced';
+  format: 'In-Person' | 'Online' | 'Hybrid';
+  capacity?: number;
+  isActive: boolean;
+  createdBy: string;
+};
+
+export type IndividualDevelopmentPlanData = {
+  employeeId: string;
+  employeeName: string;
+  managerId?: string;
+  title: string;
+  description: string;
+  gapAnalysisId: string;
+  nineBoxClassification: 'Low Performer' | 'Inconsistent Performer' | 'High Performer' | 'Emerging Talent' | 'Core Player' | 'High Professional' | 'Rising Star' | 'Key Player' | 'Top Talent';
+  developmentGoals: Array<{
+    id: string;
+    competency: string;
+    currentLevel: 'Basic' | 'Intermediate' | 'Advanced';
+    targetLevel: 'Basic' | 'Intermediate' | 'Advanced';
+    priority: 'Low' | 'Medium' | 'High';
+    timeframe: string;
+    description: string;
+    programs: Array<{
+      programId: string;
+      programName: string;
+      type: 'Coaching' | 'Mentoring' | 'Training' | 'Job Rotation' | 'Special Assignment' | 'Online Course';
+      status: 'Not Started' | 'In Progress' | 'Completed';
+      startDate?: string;
+      endDate?: string;
+      completionPercentage: number;
+      notes?: string;
+    }>;
+    successMetrics: string[];
+  }>;
+  overallProgress: {
+    status: 'Draft' | 'Active' | 'In Progress' | 'Completed' | 'On Hold';
+    completionPercentage: number;
+    startDate?: string;
+    targetCompletionDate?: string;
+    actualCompletionDate?: string;
+  };
+  approvedByManager: boolean;
+  managerComments?: string;
+  approvalDate?: string;
+  createdBy: string;
+  lastReviewDate?: string;
+  nextReviewDate?: string;
 }; 
