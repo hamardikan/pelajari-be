@@ -84,7 +84,7 @@ const resilientAIProcessing = withResilience(
     logger.info({ taskType }, 'Sending IDP request to OpenRouter for processing');
     
     const completion = await openai.chat.completions.create({
-      model: 'anthropic/claude-3-5-sonnet-20241022',
+      model: "google/gemini-2.5-flash",
       messages: [
         {
           role: 'user',
@@ -174,7 +174,10 @@ ${employeeData.assessmentResults.competencyScores ?
   ]
 }
 
-Pastikan JSON output valid dan dapat di-parse. Berikan analisis yang objektif dan konstruktif.`;
+Pastikan JSON output valid dan dapat di-parse. Berikan analisis yang objektif dan konstruktif.
+
+ONLY OUTPUT THE JSON OBJECT, WITHOUT ANY ADDITIONAL EXPLANATION, MARKDOWN, OR CODE FENCES.
+`;
 
   const result = await resilientAIProcessing(prompt, 'gap-analysis');
   
