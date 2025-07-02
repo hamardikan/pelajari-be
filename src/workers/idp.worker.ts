@@ -48,19 +48,20 @@ const openRouterClient = createOpenRouterClient({
   siteName: config.SITE_NAME,
 }, logger);
 
+// More lenient resilience config to avoid premature circuit breaking
 const resilienceConfig = createResilienceConfig({
   retry: {
-    retries: 3,
-    factor: 2,
-    minTimeout: 2000,
-    maxTimeout: 30000,
+    retries: 5, // Increased retries
+    factor: 1.5, // More gradual backoff
+    minTimeout: 1000,
+    maxTimeout: 20000,
     randomize: true,
   },
   circuitBreaker: {
-    timeout: 180000, // 3 minutes for IDP AI processing (longer than learning)
-    errorThresholdPercentage: 50,
-    resetTimeout: 60000,
-    minimumHalfOpenRequests: 1,
+    timeout: 300000, // 5 minutes for IDP AI processing
+    errorThresholdPercentage: 70, // Higher threshold before opening
+    resetTimeout: 120000, // 2 minutes before trying half-open
+    minimumHalfOpenRequests: 2,
     name: 'idp-ai-processing',
   },
   deadLetterQueue: {
@@ -106,8 +107,50 @@ const resilientAIProcessing = withResilience(
   logger
 );
 
-const resilientGapAnalysisProcessing = withResilience(
-  (frameworkData: JobCompetencyFrameworkData, employeeData: EmployeeData) => {
+/**
+ * Enhanced JSON parsing that handles markdown code blocks and other formatting
+ */
+function parseAIResponse(content: string): any {
+  try {
+    // First try parsing as-is
+    return JSON.parse(content);
+  } catch (firstError: any) {
+    try {
+      // Remove markdown code blocks if present
+      const cleanedContent = content
+        .replace(/^```json\s*/i, '') // Remove opening ```json
+        .replace(/^```\s*/i, '')     // Remove opening ```
+        .replace(/\s*```$/i, '')     // Remove closing ```
+        .trim();
+      return JSON.parse(cleanedContent);
+    } catch (secondError: any) {
+      try {
+        // Try to extract JSON from within the text using regex
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          return JSON.parse(jsonMatch[0]);
+        }
+        throw new Error('No valid JSON found in response');
+      } catch (thirdError: any) {
+        // Log the actual content for debugging
+        logger.error({ 
+          content: content.substring(0, 1000),
+          firstError: firstError && firstError.message ? firstError.message : String(firstError),
+          secondError: secondError && secondError.message ? secondError.message : String(secondError),
+          thirdError: thirdError && thirdError.message ? thirdError.message : String(thirdError)
+        }, 'All JSON parsing attempts failed');
+        throw new Error(`Failed to parse AI response: ${firstError && firstError.message ? firstError.message : String(firstError)}`);
+      }
+    }
+  }
+}
+
+// Enhanced gap analysis with direct API call and fallback
+async function processGapAnalysis(data: GapAnalysisWorkerData) {
+  const { frameworkData, employeeData } = data;
+  
+  try {
+    // First try the optimized OpenRouter client method
     const files = [
       {
         fileName: `framework-${frameworkData.jobTitle.replace(/\s+/g, '_')}.json`,
@@ -118,25 +161,133 @@ const resilientGapAnalysisProcessing = withResilience(
         fileBuffer: Buffer.from(JSON.stringify(employeeData, null, 2)),
       },
     ];
-    return openRouterClient.generateGapAnalysisFromFiles(files);
-  },
-  resilienceConfig,
-  logger
-);
+    
+    logger.info({ 
+      employeeName: employeeData.employeeName,
+      jobTitle: frameworkData.jobTitle 
+    }, 'Attempting gap analysis with OpenRouter client');
+    
+    return await openRouterClient.generateGapAnalysisFromFiles(files);
+    
+  } catch (clientError) {
+    logger.warn({ 
+      error: clientError instanceof Error ? clientError.message : 'Unknown error',
+      employeeName: employeeData.employeeName 
+    }, 'OpenRouter client failed, trying fallback prompt method');
+    
+    // Fallback to direct prompt-based approach with enhanced parsing
+    const fallbackPrompt = `You are an expert HR analyst. Perform a competency gap analysis based on the following data:
 
-async function processGapAnalysis(data: GapAnalysisWorkerData) {
-  const { frameworkData, employeeData } = data;
-  
-  const result = await resilientGapAnalysisProcessing('gap-analysis', frameworkData, employeeData);
-  
-  if (!result.success) {
-    throw result.error || new Error('Gap analysis AI processing failed');
-  }
+**JOB COMPETENCY FRAMEWORK:**
+Job Title: ${frameworkData.jobTitle}
 
-  // The new function returns pre-parsed JSON, so we just return it
-  return result.data;
+Managerial Competencies:
+${frameworkData.managerialCompetencies.map(comp => 
+  `- ${comp.name}: Required Level = ${comp.expectedLevel} (${comp.description || 'No description'})`
+).join('\n')}
+
+Functional Competencies:
+${frameworkData.functionalCompetencies.map(comp => 
+  `- ${comp.name}: Required Level = ${comp.expectedLevel} (${comp.description || 'No description'})`
+).join('\n')}
+
+**EMPLOYEE ASSESSMENT:**
+Employee ID: ${employeeData.employeeId || 'emp-' + Date.now()}
+Employee Name: ${employeeData.employeeName}
+Current Job Title: ${employeeData.currentJobTitle}
+KPI Score: ${employeeData.kpiScore}/100
+Performance Summary: ${employeeData.performanceSummary}
+
+Assessment Results:
+- Potential Score: ${employeeData.assessmentResults.potentialScore}/100
+- Summary: ${employeeData.assessmentResults.summary}
+
+Competency Scores:
+${employeeData.assessmentResults.competencyScores?.map(score => 
+  `- ${score.competencyName}: ${score.score}/100`
+).join('\n') || 'No specific competency scores provided'}
+
+**CRITICAL:** Return ONLY valid JSON without any markdown formatting, code blocks, or explanatory text:
+
+{
+  "employeeId": "${employeeData.employeeId || 'emp-' + Date.now()}",
+  "employeeName": "${employeeData.employeeName}",
+  "jobTitle": "${frameworkData.jobTitle}",
+  "analysisDate": "${new Date().toISOString().split('T')[0]}",
+  "gaps": [
+    {
+      "competency": "Competency Name",
+      "category": "managerial or functional",
+      "requiredLevel": "Basic, Intermediate, or Advanced",
+      "currentLevel": "Basic, Intermediate, or Advanced",
+      "gapLevel": 0,
+      "description": "Detailed gap description",
+      "priority": "Low, Medium, or High"
+    }
+  ],
+  "overallGapScore": 50,
+  "recommendations": [
+    "Recommendation 1",
+    "Recommendation 2"
+  ]
 }
 
+Return the JSON object directly without any formatting or explanation.`;
+
+    const result = await resilientAIProcessing('gap-analysis-fallback', fallbackPrompt);
+    
+    if (!result.success) {
+      throw result.error || new Error('Gap analysis AI processing failed');
+    }
+
+    try {
+      // Use enhanced parsing that handles markdown formatting
+      const parsedResult = parseAIResponse(result.data);
+      
+      // Validate the structure
+      if (!parsedResult.gaps || !Array.isArray(parsedResult.gaps)) {
+        throw new Error('Invalid gap analysis response structure');
+      }
+      
+      // Add missing employeeId if not present
+      if (!parsedResult.employeeId) {
+        parsedResult.employeeId = employeeData.employeeId || 'emp-' + Date.now();
+      }
+      
+      // Validate each gap object
+      for (let i = 0; i < parsedResult.gaps.length; i++) {
+        const gap = parsedResult.gaps[i];
+        const requiredFields = ['competency', 'category', 'requiredLevel', 'currentLevel', 'gapLevel', 'description', 'priority'];
+        for (const field of requiredFields) {
+          if (!(field in gap)) {
+            logger.error({ 
+              gapIndex: i, 
+              gap, 
+              missingField: field 
+            }, 'Gap object missing required field');
+            throw new Error(`Gap analysis item ${i} missing required field: ${field}`);
+          }
+        }
+      }
+      
+      logger.info({ 
+        employeeName: employeeData.employeeName,
+        gapsFound: parsedResult.gaps.length 
+      }, 'Gap analysis completed successfully with fallback method');
+      
+      return parsedResult;
+      
+    } catch (parseError: any) {
+      logger.error({ 
+        parseError: parseError && parseError.message ? parseError.message : String(parseError), 
+        response: result.data.substring(0, 1000) + '...'
+      }, 'Failed to parse gap analysis JSON response');
+      throw new Error(`Invalid JSON response from AI for gap analysis: ${parseError && parseError.message ? parseError.message : String(parseError)}`);
+    }
+  }
+}
+
+// Rest of the functions remain the same...
 async function processIDPGeneration(data: IDPGenerationWorkerData) {
   const { employeeId, employeeName, gapAnalysisData, nineBoxClassification, developmentPrograms, userId } = data;
 
@@ -160,42 +311,30 @@ ${developmentPrograms.map(program =>
     ${program.cost ? `Biaya: ${program.cost}` : 'Gratis'}`
 ).join('\n\n')}
 
-**PANDUAN PEMBUATAN IDP:**
-1. Untuk karyawan dengan klasifikasi "${nineBoxClassification}":
-   ${nineBoxClassification.includes('Rising Star') || nineBoxClassification.includes('Top Talent') ? 
-     '- Prioritaskan stretch assignments dan mentorship\n   - Berikan tantangan pengembangan leadership\n   - Fokus pada pengembangan jangka panjang' :
-   nineBoxClassification.includes('High Performer') || nineBoxClassification.includes('Key Player') ?
-     '- Berikan program pelatihan advance\n   - Kombinasikan training formal dan on-the-job learning\n   - Fokus pada kompetensi spesifik' :
-     '- Fokus pada fundamental skills\n   - Berikan coaching intensif\n   - Mulai dengan program basic level'}
+**IMPORTANT:** Return ONLY valid JSON without markdown formatting or code blocks.
 
-2. Prioritaskan 3-5 kompetensi dengan gap tertinggi
-3. Pilih 1-2 program yang paling relevan untuk setiap kompetensi
-4. Tentukan timeframe yang realistis (3-12 bulan)
-5. Definisikan success metrics yang terukur
-
-**FORMAT OUTPUT:** Berikan hasil dalam format JSON yang valid:
+Berikan hasil dalam format JSON yang valid tanpa markdown:
 
 {
   "employeeId": "${employeeId}",
   "employeeName": "${employeeName}",
-  "title": "Individual Development Plan - [Nama Karyawan]",
+  "title": "Individual Development Plan - ${employeeName}",
   "description": "Deskripsi singkat tujuan IDP ini",
-  "gapAnalysisId": "akan diisi oleh sistem",
   "nineBoxClassification": "${nineBoxClassification}",
   "developmentGoals": [
     {
       "id": "goal-1",
       "competency": "Nama Kompetensi",
-      "currentLevel": "Basic" | "Intermediate" | "Advanced",
-      "targetLevel": "Basic" | "Intermediate" | "Advanced", 
-      "priority": "Low" | "Medium" | "High",
+      "currentLevel": "Basic",
+      "targetLevel": "Intermediate", 
+      "priority": "High",
       "timeframe": "3-6 bulan",
       "description": "Deskripsi detail goal pengembangan",
       "programs": [
         {
           "programId": "akan diisi oleh sistem",
           "programName": "Nama Program dari katalog",
-          "type": "Coaching" | "Mentoring" | "Training" | "Job Rotation" | "Special Assignment" | "Online Course",
+          "type": "Training",
           "status": "Not Started",
           "completionPercentage": 0
         }
@@ -211,9 +350,7 @@ ${developmentPrograms.map(program =>
     "completionPercentage": 0
   },
   "approvedByManager": false
-}
-
-Pastikan IDP realistis, terukur, dan sesuai dengan klasifikasi 9-Box karyawan. Gunakan program dari katalog yang tersedia.`;
+}`;
 
   const result = await resilientAIProcessing('idp-generation', prompt);
   
@@ -222,16 +359,19 @@ Pastikan IDP realistis, terukur, dan sesuai dengan klasifikasi 9-Box karyawan. G
   }
 
   try {
-    const idpPlan = JSON.parse(result.data);
+    const idpPlan = parseAIResponse(result.data);
     
     if (!idpPlan.developmentGoals || !Array.isArray(idpPlan.developmentGoals)) {
       throw new Error('Invalid IDP response structure');
     }
 
     return idpPlan;
-  } catch (error) {
-    logger.error({ error, response: result.data }, 'Failed to parse IDP JSON response');
-    throw new Error('Invalid JSON response from AI for IDP generation');
+  } catch (error: any) {
+    logger.error({ 
+      error: error && error.message ? error.message : String(error), 
+      response: result.data.substring(0, 1000) + '...'
+    }, 'Failed to parse IDP JSON response');
+    throw new Error(`Invalid JSON response from AI for IDP generation: ${error && error.message ? error.message : String(error)}`);
   }
 }
 
@@ -284,7 +424,7 @@ ${JSON.stringify(currentAnalysis, null, 2)}
   "roi": {
     "qualitativeAssessment": "Deskripsi ROI secara kualitatif",
     "keySuccessFactors": ["Faktor kunci keberhasilan"],
-    "areasForImprovement": ["Area yang masih perlu diperbaiki"]
+    "areasForImprovement": ["Area yang masih perlu diperbaikan"]
   }
 }`;
 
@@ -384,4 +524,4 @@ process.on('unhandledRejection', (reason) => {
 });
 
 // Start processing
-processIDPTask(); 
+processIDPTask();

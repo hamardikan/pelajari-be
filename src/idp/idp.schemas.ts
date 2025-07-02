@@ -50,6 +50,7 @@ const employeeDataSchema = z.object({
       score: z.number().min(0, 'Score must be at least 0').max(100, 'Score must not exceed 100'),
     })).optional(),
   }),
+  employeeId: z.string().uuid('Employee ID must be a valid UUID').optional(),
 });
 
 // Gap Analysis Input Schema

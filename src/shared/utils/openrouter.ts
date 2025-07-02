@@ -160,7 +160,7 @@ const gapAnalysisSchema = {
       employeeId: { type: 'string' },
       employeeName: { type: 'string' },
       jobTitle: { type: 'string' },
-      analysisDate: { type: 'string', format: 'date' },
+      analysisDate: { type: 'string' },
       gaps: {
         type: 'array',
         items: {
@@ -174,7 +174,8 @@ const gapAnalysisSchema = {
             description: { type: 'string' },
             priority: { type: 'string', enum: ['Low', 'Medium', 'High'] }
           },
-          required: ['competency', 'category', 'requiredLevel', 'currentLevel', 'gapLevel', 'description', 'priority']
+          required: ['competency', 'category', 'requiredLevel', 'currentLevel', 'gapLevel', 'description', 'priority'],
+          additionalProperties: false
         }
       },
       overallGapScore: { type: 'number', minimum: 0, maximum: 100 },
@@ -183,7 +184,8 @@ const gapAnalysisSchema = {
         items: { type: 'string' }
       }
     },
-    required: ['employeeId', 'employeeName', 'jobTitle', 'analysisDate', 'gaps', 'overallGapScore', 'recommendations']
+    required: ['employeeId', 'employeeName', 'jobTitle', 'analysisDate', 'gaps', 'overallGapScore', 'recommendations'],
+    additionalProperties: false
   }
 };
 
@@ -215,6 +217,37 @@ const evaluationSchema = {
     additionalProperties: false
   }
 };
+
+/**
+ * Utility function to clean and parse AI responses that might contain markdown formatting
+ */
+function parseAIResponse(content: string): any {
+  try {
+    // First try parsing as-is
+    return JSON.parse(content);
+  } catch (firstError: any) {
+    try {
+      // Remove markdown code blocks if present
+      const cleanedContent = content
+        .replace(/^```json\s*/i, '') // Remove opening ```json
+        .replace(/^```\s*/i, '')     // Remove opening ```
+        .replace(/\s*```$/i, '')     // Remove closing ```
+        .trim();
+      return JSON.parse(cleanedContent);
+    } catch (secondError: any) {
+      try {
+        // Try to extract JSON from within the text using regex
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          return JSON.parse(jsonMatch[0]);
+        }
+        throw new Error('No valid JSON found in response');
+      } catch (thirdError: any) {
+        throw new Error(`Failed to parse AI response: ${firstError && firstError.message ? firstError.message : String(firstError)}`);
+      }
+    }
+  }
+}
 
 export function createOpenRouterClient(config: OpenRouterConfig, logger: Logger): OpenRouterClient {
   const openai = new OpenAI({
@@ -356,15 +389,13 @@ Ensure all arrays contain exactly 10 items as specified.`
   }
 
   /**
-   * Generates a gap analysis by uploading and comparing multiple files.
-   * @param {Array<{fileName: string, fileBuffer: Buffer}>} files - An array of file objects.
-   * @returns {Promise<any>} The parsed gap analysis from the AI.
+   * Enhanced gap analysis with better prompt and error handling
    */
   async function generateGapAnalysisFromFiles(files: Array<{fileName: string, fileBuffer: Buffer}>): Promise<any> {
     try {
-      logger.info({ fileNames: files.map(f => f.fileName) }, 'Generating analysis from multiple files');
+      logger.info({ fileNames: files.map(f => f.fileName) }, 'Generating gap analysis from multiple files');
 
-      // 1. Create the file content parts for the message
+      // Create the file content parts for the message
       const fileContents = files.map(file => {
         const mimeType = getMimeType(file.fileName);
         const base64Data = file.fileBuffer.toString('base64');
@@ -379,32 +410,25 @@ Ensure all arrays contain exactly 10 items as specified.`
         };
       });
 
-      // 2. Construct the full message payload
+      // Enhanced prompt with clearer instructions about JSON format
       const messages = [
         {
           role: "system",
-          content: "You are an expert HR analyst. Your task is to perform a comprehensive analysis by comparing the documents provided by the user. Produce a valid JSON output based on the `gapAnalysisSchema`."
+          content: `You are an expert HR analyst specializing in competency gap analysis. You must return ONLY valid JSON - no markdown, no code blocks, no explanatory text.`
         },
         {
           role: "user",
           content: [
-            // Text prompt should come first
             {
               type: "text",
-              text: `Please perform a gap analysis based on the attached files. Follow these instructions:
-                1. Compare the competency framework document with the employee data document.
-                2. Identify gaps for each competency.
-                3. Determine the gap level (0: none, 1: minor, 2: major) and priority.
-                4. Provide development recommendations and an overall gap score.
-                5. Ensure the output is ONLY a valid JSON object matching the required schema.`
+              text: `Perform a competency gap analysis based on the attached files. Compare the competency framework with employee data.\n\nCRITICAL REQUIREMENTS:\n1. Return ONLY raw JSON (no markdown code blocks like \`\`\`json)\n2. Every gap object must include ALL required fields:\n   - competency (string): exact competency name\n   - category (string): "managerial" or "functional"\n   - requiredLevel (string): "Basic", "Intermediate", or "Advanced"\n   - currentLevel (string): "Basic", "Intermediate", or "Advanced"\n   - gapLevel (number): 0, 1, or 2\n   - description (string): detailed explanation\n   - priority (string): "Low", "Medium", or "High"\n\nReturn the JSON object directly without any formatting or explanation.`
             },
-            // Spread the file content parts into the array
             ...fileContents
           ]
         }
       ];
 
-      // 3. Use fetch to send the request
+      // Make the API call
       const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: 'POST',
         headers: {
@@ -418,10 +442,10 @@ Ensure all arrays contain exactly 10 items as specified.`
           messages: messages,
           response_format: {
             type: "json_schema",
-            json_schema: gapAnalysisSchema // Your schema defined elsewhere
+            json_schema: gapAnalysisSchema
           },
           max_tokens: 4000,
-          temperature: 0.7
+          temperature: 0.3
         })
       });
 
@@ -437,8 +461,46 @@ Ensure all arrays contain exactly 10 items as specified.`
         throw new Error('No content received from AI for gap analysis');
       }
 
-      const parsedContent = JSON.parse(content);
-      logger.info({ employeeName: parsedContent.employeeName }, 'Gap analysis generated successfully by AI');
+      // Use the enhanced parsing function
+      let parsedContent;
+      try {
+        parsedContent = parseAIResponse(content);
+      } catch (parseError: any) {
+        logger.error({ 
+          content: content.substring(0, 500) + '...', 
+          parseError: parseError && parseError.message ? parseError.message : String(parseError) 
+        }, 'Failed to parse AI response as JSON');
+        throw new Error(`AI returned invalid JSON format: ${parseError && parseError.message ? parseError.message : String(parseError)}`);
+      }
+
+      // Validate the structure
+      if (!parsedContent.gaps || !Array.isArray(parsedContent.gaps)) {
+        throw new Error('AI response missing valid gaps array');
+      }
+
+      // Validate each gap object
+      for (let i = 0; i < parsedContent.gaps.length; i++) {
+        const gap = parsedContent.gaps[i];
+        const requiredFields = ['competency', 'category', 'requiredLevel', 'currentLevel', 'gapLevel', 'description', 'priority'];
+        
+        for (const field of requiredFields) {
+          if (!(field in gap)) {
+            logger.error({ 
+              gapIndex: i, 
+              gap, 
+              missingField: field 
+            }, 'Gap object missing required field');
+            throw new Error(`Gap analysis item ${i} missing required field: ${field}`);
+          }
+        }
+      }
+
+      logger.info({ 
+        employeeName: parsedContent.employeeName,
+        gapsFound: parsedContent.gaps.length,
+        overallScore: parsedContent.overallGapScore
+      }, 'Gap analysis generated successfully by AI');
+      
       return parsedContent;
 
     } catch (error) {
