@@ -24,6 +24,10 @@ import { createDocumentRepository } from './documents/documents.repositories.js'
 import { createDocumentService } from './documents/documents.services.js';
 import { createDocumentHandlers } from './documents/documents.handlers.js';
 import { createDocumentRoutes } from './documents/documents.routes.js';
+import { createRoleplayRepository } from './roleplay/roleplay.repositories.js';
+import { createRoleplayService } from './roleplay/roleplay.services.js';
+import { createRoleplayHandlers } from './roleplay/roleplay.handlers.js';
+import { createRoleplayRoutes } from './roleplay/roleplay.routes.js';
 import { createR2Client } from './shared/utils/r2.js';
 import { createOpenRouterClient } from './shared/utils/openrouter.js';
 import { createErrorHandler, createNotFoundHandler } from './shared/middleware/error.middleware.js';
@@ -73,6 +77,7 @@ export async function createApp() {
   const learningRepository = createLearningRepository(db, logger);
   const idpRepository = createIDPRepository(db, logger);
   const documentRepository = createDocumentRepository(db, logger);
+  const roleplayRepository = createRoleplayRepository(db, logger);
   
   // Create services
   const authService = createAuthService({
@@ -90,6 +95,7 @@ export async function createApp() {
     logger
   );
   const idpService = createIDPService(idpRepository, logger);
+  const roleplayService = createRoleplayService(roleplayRepository, logger);
   
   // Create handlers
   const authHandlers = createAuthHandlers({
@@ -106,6 +112,10 @@ export async function createApp() {
   });
   const documentHandlers = createDocumentHandlers({
     documentService,
+    logger,
+  });
+  const roleplayHandlers = createRoleplayHandlers({
+    roleplayService,
     logger,
   });
   
@@ -142,6 +152,9 @@ export async function createApp() {
   // IDP routes
   app.use('/api/idp', createIDPRoutes(idpHandlers));
   
+  // Roleplay routes
+  app.use('/api/roleplay', createRoleplayRoutes(roleplayHandlers));
+  
   // Error handling middleware (must be last)
   app.use(createNotFoundHandler());
   app.use(createErrorHandler(logger, config.NODE_ENV === 'development'));
@@ -158,12 +171,14 @@ export async function createApp() {
       learningService,
       idpService,
       documentService,
+      roleplayService,
     },
     handlers: {
       authHandlers,
       learningHandlers,
       idpHandlers,
       documentHandlers,
+      roleplayHandlers,
     },
     healthStatus: validationResult,
   };

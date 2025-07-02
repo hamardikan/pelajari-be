@@ -74,7 +74,8 @@ function createValidationMiddleware(
           req.params = result.data as Record<string, string>;
           break;
         case 'query':
-          req.query = result.data as any;
+          // Store validated query data in a different property since req.query is read-only
+          (req as any).validatedQuery = result.data;
           break;
         case 'headers':
           // Don't replace headers, just validate
@@ -157,7 +158,8 @@ function createMultiValidationMiddleware(validations: Array<{
             req.params = result.data as Record<string, string>;
             break;
           case 'query':
-            req.query = result.data as any;
+            // Store validated query data in a different property since req.query is read-only
+            (req as any).validatedQuery = result.data;
             break;
         }
       }
