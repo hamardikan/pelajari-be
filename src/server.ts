@@ -1,3 +1,7 @@
+// Load environment variables FIRST before any other imports
+import { config } from 'dotenv';
+config();
+
 import { startServer } from './app.js';
 
 // Start the server
