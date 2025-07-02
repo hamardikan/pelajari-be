@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
+import multer from 'multer';
 import { getEnvironmentConfig } from './config/environment.js';
 import { createDatabaseConnection } from './config/database.js';
 import { createLogger, createRequestLogger, addCorrelationId } from './config/logger.js';
@@ -19,10 +20,13 @@ import { createIDPRepository } from './idp/idp.repositories.js';
 import { createIDPService } from './idp/idp.services.js';
 import { createIDPHandlers } from './idp/idp.handlers.js';
 import { createIDPRoutes } from './idp/idp.routes.js';
+import { createDocumentRepository } from './documents/documents.repositories.js';
+import { createDocumentService } from './documents/documents.services.js';
+import { createDocumentHandlers } from './documents/documents.handlers.js';
 import { createR2Client } from './shared/utils/r2.js';
 import { createOpenRouterClient } from './shared/utils/openrouter.js';
 import { createErrorHandler, createNotFoundHandler } from './shared/middleware/error.middleware.js';
-import { validateBody, validateParams } from './shared/middleware/validation.middleware.js';
+import { validateBody, validateParams, validateQuery } from './shared/middleware/validation.middleware.js';
 import { 
   registerSchema, 
   loginSchema, 
@@ -34,6 +38,12 @@ import {
   updateUserRoleSchema,
   userIdParamsSchema
 } from './auth/auth.schemas.js';
+import { 
+  createDocumentSchema,
+  updateDocumentSchema,
+  documentsQuerySchema,
+  documentIdParamsSchema
+} from './documents/documents.schemas.js';
 
 export async function createApp() {
   const config = getEnvironmentConfig();
@@ -79,6 +89,7 @@ export async function createApp() {
   const authRepository = createAuthRepository(db, logger);
   const learningRepository = createLearningRepository(db, logger);
   const idpRepository = createIDPRepository(db, logger);
+  const documentRepository = createDocumentRepository(db, logger);
   
   // Create services
   const authService = createAuthService({
@@ -87,8 +98,10 @@ export async function createApp() {
     jwtUtils,
     passwordUtils,
   });
+  const documentService = createDocumentService(documentRepository, r2Client, logger);
   const learningService = createLearningService(
     learningRepository,
+    documentService, // NEW: Add document service
     r2Client,
     openRouterClient,
     logger
@@ -108,9 +121,19 @@ export async function createApp() {
     idpService,
     logger,
   });
+  const documentHandlers = createDocumentHandlers({
+    documentService,
+    logger,
+  });
   
   // Create Express app
   const app = express();
+  
+  // Multer configuration for file uploads
+  const upload = multer({ 
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  });
   
   // Global middleware
   app.use(helmet());
@@ -177,6 +200,14 @@ export async function createApp() {
     authHandlers.updateUserRole
   );
   
+  // Document endpoints
+  app.post('/api/documents', upload.single('file'), validateBody(createDocumentSchema), documentHandlers.uploadDocument);
+  app.get('/api/documents', validateQuery(documentsQuerySchema), documentHandlers.getDocuments);
+  app.get('/api/documents/:documentId', validateParams(documentIdParamsSchema), documentHandlers.getDocument);
+  app.put('/api/documents/:documentId', validateParams(documentIdParamsSchema), validateBody(updateDocumentSchema), documentHandlers.updateDocument);
+  app.delete('/api/documents/:documentId', validateParams(documentIdParamsSchema), documentHandlers.deleteDocument);
+  app.get('/api/documents/:documentId/content', validateParams(documentIdParamsSchema), documentHandlers.getDocumentContent);
+
   // Learning routes
   app.use('/api/learning', createLearningRoutes(learningHandlers));
   
@@ -198,11 +229,13 @@ export async function createApp() {
       authService,
       learningService,
       idpService,
+      documentService,
     },
     handlers: {
       authHandlers,
       learningHandlers,
       idpHandlers,
+      documentHandlers,
     },
     healthStatus: validationResult,
   };

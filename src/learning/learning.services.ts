@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import type { LearningRepository, LearningModuleRecord, UserProgressRecord } from './learning.repositories.js';
 import type { R2Client } from '../shared/utils/r2.js';
 import type { OpenRouterClient, AssessmentQuestionData, EvaluationQuestionData } from '../shared/utils/openrouter.js';
+import type { DocumentService } from '../documents/documents.services.js';
 import type { LearningModuleData, UserModuleProgressData } from '../db/schema.js';
 import type { 
   SubmitAssessmentData, 
@@ -27,6 +28,7 @@ export type FileUploadData = {
 
 export type ModuleCreationResult = {
   moduleId: string;
+  documentId?: string; // NEW: Return document ID too
   status: 'processing' | 'completed' | 'failed';
   message: string;
 };
@@ -87,6 +89,7 @@ export type LearningService = {
 
 export function createLearningService(
   learningRepository: LearningRepository,
+  documentService: DocumentService, // NEW: Add document service
   r2Client: R2Client,
   openRouterClient: OpenRouterClient,
   logger: Logger
@@ -101,13 +104,22 @@ export function createLearningService(
         mimeType: file.mimetype 
       }, 'Starting module creation from file');
 
-      // Process PDF directly without uploading to R2 first
-      logger.info({ userId, fileName: file.originalname }, 'Starting AI processing of PDF');
+      // STEP 1: Upload document first using document service
+      logger.info({ userId, fileName: file.originalname }, 'Uploading document for module generation');
+      const document = await documentService.uploadDocument(userId, file, {
+        title: `Source: ${file.originalname}`,
+        description: 'Document uploaded for learning module generation',
+        tags: ['learning-source'],
+      });
+
+      // STEP 2: Process with AI using the document
+      logger.info({ userId, fileName: file.originalname, documentId: document.id }, 'Starting AI processing of document');
 
       // Start worker for AI processing
       const workerPath = path.join(__dirname, '../workers/learning.worker.js');
       const worker = new Worker(workerPath, {
         workerData: { 
+          documentId: document.id,
           pdfBuffer: file.buffer,
           fileName: file.originalname,
           userId 
@@ -126,17 +138,19 @@ export function createLearningService(
           if (message.error) {
             logger.error({ 
               userId, 
-              fileName: file.originalname, 
+              fileName: file.originalname,
+              documentId: document.id,
               error: message.error 
             }, 'Worker failed to process file');
             
             reject(new Error(message.error));
           } else {
             try {
-              // Store the generated module
+              // STEP 3: Create learning module with document reference
               const moduleData: LearningModuleData = {
                 title: message.content.title,
                 summary: message.content.summary,
+                sourceDocumentId: document.id, // NEW: Reference to document
                 authorId: userId,
                 isPublished: true,
                 difficulty: 'intermediate', // Default, can be enhanced later
@@ -160,21 +174,27 @@ export function createLearningService(
 
               const newModule = await learningRepository.createModule(moduleData);
               
+              // STEP 4: Update document usage tracking
+              await documentService.markDocumentUsed(document.id, 'learning_module', newModule.id);
+              
               logger.info({ 
                 userId, 
-                moduleId: newModule.id, 
+                moduleId: newModule.id,
+                documentId: document.id,
                 fileName: file.originalname 
               }, 'Module created successfully from file');
 
               resolve({
                 moduleId: newModule.id,
+                documentId: document.id, // NEW: Return document ID too
                 status: 'completed',
                 message: 'Module created successfully'
               });
             } catch (dbError) {
               logger.error({ 
                 userId, 
-                fileName: file.originalname, 
+                fileName: file.originalname,
+                documentId: document.id,
                 error: dbError 
               }, 'Failed to save module to database');
               
@@ -187,7 +207,8 @@ export function createLearningService(
           clearTimeout(timeout);
           logger.error({ 
             userId, 
-            fileName: file.originalname, 
+            fileName: file.originalname,
+            documentId: document.id,
             error: error.message 
           }, 'Worker error during file processing');
           
@@ -199,7 +220,8 @@ export function createLearningService(
           if (code !== 0) {
             logger.error({ 
               userId, 
-              fileName: file.originalname, 
+              fileName: file.originalname,
+              documentId: document.id,
               exitCode: code 
             }, 'Worker exited with error code');
             

@@ -24,14 +24,6 @@ export const learningModules = pgTable('learning_modules', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
-// Personal development plans table - stores user development plans
-export const personalDevelopmentPlans = pgTable('personal_development_plans', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  data: jsonb('data').notNull(),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-  updatedAt: timestamp('updated_at').defaultNow().notNull(),
-});
-
 // Roleplay scenarios table - stores roleplay scenario definitions
 export const roleplayScenarios = pgTable('roleplay_scenarios', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -108,23 +100,37 @@ export type UserData = {
 
 export type DocumentData = {
   title: string;
-  content: string;
-  type: 'policy' | 'procedure' | 'guideline' | 'training_material';
-  tags: string[];
-  authorId: string;
-  isPublished: boolean;
-  version: number;
+  originalFilename: string;
+  storagePath: string; // R2 storage path  
+  fileType: 'pdf' | 'docx' | 'txt' | 'pptx';
+  uploadedBy: string; // userId
+  fileSize: number;
+  uploadedAt: string;
   metadata: {
-    department?: string;
-    audience: string[];
-    lastReviewedAt?: string;
+    extractedText?: string; // Cached extracted text
+    processingStatus: 'pending' | 'completed' | 'failed';
+    lastProcessedAt?: string;
+    tags: string[];
+    description?: string;
+  };
+  usage: {
+    learningModulesGenerated: string[]; // array of learning module IDs
+    developmentProgramsReferenced: string[]; // array of development program IDs  
+    idpAnalysisUsed: string[]; // array of IDP analysis IDs
   };
 };
 
 export type LearningModuleData = {
   title: string;
   description?: string;
-  summary?: string;
+  summary: string;
+  sourceDocumentId?: string; // NEW: Reference to documents table
+  authorId: string;
+  isPublished: boolean;
+  difficulty: 'beginner' | 'intermediate' | 'advanced';
+  estimatedDuration: number;
+  tags: string[];
+  prerequisites: string[];
   content: {
     sections: Array<{
       title: string;
@@ -132,85 +138,59 @@ export type LearningModuleData = {
       type: 'text' | 'video' | 'quiz' | 'interactive';
       duration?: number;
     }>;
-    flashcards?: Array<{
+    flashcards: Array<{
       term: string;
       definition: string;
     }>;
-    assessment?: Array<{
+    assessment: Array<{
       question: string;
       options: string[];
       correctAnswer: string;
       explanation: string;
     }>;
-    evaluation?: Array<{
+    evaluation: Array<{
       scenario: string;
       question: string;
       sampleAnswer: string;
       evaluationCriteria: string[];
     }>;
   };
-  difficulty: 'beginner' | 'intermediate' | 'advanced';
-  estimatedDuration: number;
-  tags: string[];
-  prerequisites: string[];
-  authorId: string;
-  isPublished: boolean;
-  flashcards?: Array<{
-    term: string;
-    definition: string;
-  }>;
-  assessment?: Array<{
-    question: string;
-    options: string[];
-    correctAnswer: string;
-    explanation: string;
-  }>;
-  evaluation?: Array<{
-    scenario: string;
-    question: string;
-    sampleAnswer: string;
-    evaluationCriteria: string[];
-  }>;
-};
-
-export type PersonalDevelopmentPlanData = {
-  userId: string;
-  title: string;
-  description: string;
-  goals: Array<{
-    id: string;
-    title: string;
-    description: string;
-    targetDate: string;
-    status: 'not_started' | 'in_progress' | 'completed';
-    milestones: Array<{
-      id: string;
-      title: string;
-      completed: boolean;
-      completedAt?: string;
-    }>;
-  }>;
-  createdBy: string;
-  status: 'draft' | 'active' | 'completed' | 'archived';
+  // Keep these for backward compatibility
+  flashcards: Array<{ term: string; definition: string; }>;
+  assessment: Array<{ question: string; options: string[]; correctAnswer: string; explanation: string; }>;
+  evaluation: Array<{ scenario: string; question: string; sampleAnswer: string; evaluationCriteria: string[]; }>;
 };
 
 export type RoleplayScenarioData = {
   title: string;
   description: string;
+  difficulty: 'beginner' | 'intermediate' | 'advanced';
+  estimatedDuration: number; // minutes
+  targetCompetencies: string[];
   scenario: {
     context: string;
-    characters: Array<{
-      name: string;
-      role: string;
-      personality: string;
-      background: string;
-    }>;
+    setting: string;
+    yourRole: string;
+    aiRole: string;
     objectives: string[];
-    difficulty: 'beginner' | 'intermediate' | 'advanced';
+    successCriteria: string[];
+  };
+  systemPrompt: string; // AI instructions for roleplay
+  evaluationCriteria: {
+    communicationSkills: string[];
+    problemSolving: string[];
+    leadership: string[];
+    technicalKnowledge: string[];
+    [key: string]: string[];
   };
   tags: string[];
   authorId: string;
   isPublished: boolean;
+  usage: {
+    timesUsed: number;
+    averageScore: number;
+    lastUsedAt?: string;
+  };
 };
 
 export type RoleplaySessionData = {
@@ -220,22 +200,29 @@ export type RoleplaySessionData = {
     startedAt: string;
     endedAt?: string;
     status: 'active' | 'completed' | 'abandoned';
+    totalDuration?: number; // minutes
     messages: Array<{
       id: string;
       timestamp: string;
       sender: 'user' | 'ai';
       content: string;
-      metadata?: Record<string, unknown>;
+      metadata?: {
+        tone?: string;
+        confidence?: number;
+      };
     }>;
-    feedback?: {
+    evaluation?: {
       overallScore: number;
-      areas: Array<{
-        category: string;
-        score: number;
-        feedback: string;
-      }>;
-      suggestions: string[];
+      competencyScores: Record<string, number>;
+      strengths: string[];
+      areasForImprovement: string[];
+      detailedFeedback: string;
+      recommendations: string[];
     };
+  };
+  context: {
+    idpId?: string; // If part of IDP execution
+    developmentProgramId?: string; // If part of development program
   };
 };
 

@@ -15,6 +15,13 @@
       "when": 1751457235616,
       "tag": "0001_charming_blindfold",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1751475086500,
+      "tag": "0002_same_changeling",
+      "breakpoints": true
     }
   ]
 }
