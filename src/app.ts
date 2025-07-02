@@ -11,6 +11,12 @@ import { createAuthService } from './auth/auth.services.js';
 import { createAuthHandlers } from './auth/auth.handlers.js';
 import { createJwtUtils } from './shared/utils/jwt.js';
 import { createPasswordUtils } from './shared/utils/password.js';
+import { createLearningRepository } from './learning/learning.repositories.js';
+import { createLearningService } from './learning/learning.services.js';
+import { createLearningHandlers } from './learning/learning.handlers.js';
+import { createLearningRoutes } from './learning/learning.routes.js';
+import { createR2Client } from './shared/utils/r2.js';
+import { createOpenRouterClient } from './shared/utils/openrouter.js';
 import { createErrorHandler, createNotFoundHandler } from './shared/middleware/error.middleware.js';
 import { validateBody, validateParams } from './shared/middleware/validation.middleware.js';
 import { 
@@ -53,9 +59,21 @@ export async function createApp() {
   // Create utilities (only after validation passes)
   const jwtUtils = createJwtUtils(config);
   const passwordUtils = createPasswordUtils();
+  const r2Client = createR2Client({
+    accessKeyId: config.R2_ACCESS_KEY_ID,
+    secretAccessKey: config.R2_SECRET_ACCESS_KEY,
+    bucketName: config.R2_BUCKET_NAME,
+    accountId: config.R2_ACCOUNT_ID,
+  }, logger);
+  const openRouterClient = createOpenRouterClient({
+    apiKey: config.OPENROUTER_API_KEY,
+    siteUrl: config.SITE_URL,
+    siteName: config.SITE_NAME,
+  }, logger);
   
   // Create repositories
   const authRepository = createAuthRepository(db, logger);
+  const learningRepository = createLearningRepository(db, logger);
   
   // Create services
   const authService = createAuthService({
@@ -64,10 +82,20 @@ export async function createApp() {
     jwtUtils,
     passwordUtils,
   });
+  const learningService = createLearningService(
+    learningRepository,
+    r2Client,
+    openRouterClient,
+    logger
+  );
   
   // Create handlers
   const authHandlers = createAuthHandlers({
     authService,
+    logger,
+  });
+  const learningHandlers = createLearningHandlers({
+    learningService,
     logger,
   });
   
@@ -139,6 +167,9 @@ export async function createApp() {
     authHandlers.updateUserRole
   );
   
+  // Learning routes
+  app.use('/api/learning', createLearningRoutes(learningHandlers));
+  
   // Error handling middleware (must be last)
   app.use(createNotFoundHandler());
   app.use(createErrorHandler(logger, config.NODE_ENV === 'development'));
@@ -152,9 +183,11 @@ export async function createApp() {
     db,
     services: {
       authService,
+      learningService,
     },
     handlers: {
       authHandlers,
+      learningHandlers,
     },
     healthStatus: validationResult,
   };

@@ -98,13 +98,30 @@ export type DocumentData = {
 
 export type LearningModuleData = {
   title: string;
-  description: string;
+  description?: string;
+  summary?: string;
   content: {
     sections: Array<{
       title: string;
       content: string;
       type: 'text' | 'video' | 'quiz' | 'interactive';
       duration?: number;
+    }>;
+    flashcards?: Array<{
+      term: string;
+      definition: string;
+    }>;
+    assessment?: Array<{
+      question: string;
+      options: string[];
+      correctAnswer: string;
+      explanation: string;
+    }>;
+    evaluation?: Array<{
+      scenario: string;
+      question: string;
+      sampleAnswer: string;
+      evaluationCriteria: string[];
     }>;
   };
   difficulty: 'beginner' | 'intermediate' | 'advanced';
@@ -113,6 +130,22 @@ export type LearningModuleData = {
   prerequisites: string[];
   authorId: string;
   isPublished: boolean;
+  flashcards?: Array<{
+    term: string;
+    definition: string;
+  }>;
+  assessment?: Array<{
+    question: string;
+    options: string[];
+    correctAnswer: string;
+    explanation: string;
+  }>;
+  evaluation?: Array<{
+    scenario: string;
+    question: string;
+    sampleAnswer: string;
+    evaluationCriteria: string[];
+  }>;
 };
 
 export type PersonalDevelopmentPlanData = {

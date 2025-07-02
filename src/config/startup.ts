@@ -2,6 +2,8 @@ import type { Logger } from 'pino';
 import type { Database } from './database.js';
 import { checkDatabaseHealth } from './database.js';
 import type { EnvironmentConfig } from './environment.js';
+import { createOpenRouterClient } from '../shared/utils/openrouter.js';
+import { createR2Client } from '../shared/utils/r2.js';
 
 export type DependencyCheck = {
   name: string;
@@ -236,6 +238,39 @@ function createExternalServiceCheck(
   };
 }
 
+function createOpenRouterHealthCheck(config: EnvironmentConfig, logger: Logger): DependencyCheck {
+  return {
+    name: 'openrouter-api',
+    critical: true,
+    timeout: 8000,
+    check: async () => {
+      const client = createOpenRouterClient({
+        apiKey: config.OPENROUTER_API_KEY,
+        siteUrl: config.SITE_URL,
+        siteName: config.SITE_NAME,
+      }, logger.child({ component: 'openrouter-health' }));
+      return client.testConnection();
+    },
+  };
+}
+
+function createR2HealthCheck(config: EnvironmentConfig, logger: Logger): DependencyCheck {
+  return {
+    name: 'cloudflare-r2',
+    critical: true,
+    timeout: 8000,
+    check: async () => {
+      const r2Client = createR2Client({
+        accessKeyId: config.R2_ACCESS_KEY_ID,
+        secretAccessKey: config.R2_SECRET_ACCESS_KEY,
+        bucketName: config.R2_BUCKET_NAME,
+        accountId: config.R2_ACCOUNT_ID,
+      }, logger.child({ component: 'r2-health' }));
+      return r2Client.testConnection();
+    },
+  };
+}
+
 async function performStartupValidation(
   db: Database,
   config: EnvironmentConfig,
@@ -245,6 +280,8 @@ async function performStartupValidation(
     createEnvironmentCheck(config),
     createJWTSecretValidationCheck(config),
     createDatabaseHealthCheck(db),
+    createOpenRouterHealthCheck(config, logger),
+    createR2HealthCheck(config, logger),
     // Add more dependency checks as needed
     // createExternalServiceCheck('auth-service', 'https://auth.example.com/health', false),
   ];
@@ -259,5 +296,7 @@ export {
   createEnvironmentCheck,
   createJWTSecretValidationCheck,
   createExternalServiceCheck,
+  createOpenRouterHealthCheck,
+  createR2HealthCheck,
   performStartupValidation,
 }; 

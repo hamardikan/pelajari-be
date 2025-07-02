@@ -15,6 +15,15 @@ const environmentSchema = z.object({
   CIRCUIT_BREAKER_TIMEOUT: z.string().transform(Number).default('60000'),
   DB_POOL_MIN: z.string().transform(Number).default('2'),
   DB_POOL_MAX: z.string().transform(Number).default('10'),
+  // OpenRouter configuration
+  OPENROUTER_API_KEY: z.string().min(1, 'OpenRouter API key is required'),
+  SITE_URL: z.string().url().optional(),
+  SITE_NAME: z.string().optional(),
+  // R2 configuration
+  R2_ACCESS_KEY_ID: z.string().min(1, 'R2 access key ID is required'),
+  R2_SECRET_ACCESS_KEY: z.string().min(1, 'R2 secret access key is required'),
+  R2_BUCKET_NAME: z.string().min(1, 'R2 bucket name is required'),
+  R2_ACCOUNT_ID: z.string().min(1, 'R2 account ID is required'),
 });
 
 export type EnvironmentConfig = z.infer<typeof environmentSchema>;
