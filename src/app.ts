@@ -1,17 +1,29 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
 import { getEnvironmentConfig } from './config/environment.js';
 import { createDatabaseConnection } from './config/database.js';
 import { createLogger, createRequestLogger, addCorrelationId } from './config/logger.js';
 import { performStartupValidation } from './config/startup.js';
 import { createAuthRepository } from './auth/auth.repositories.js';
 import { createAuthService } from './auth/auth.services.js';
+import { createAuthHandlers } from './auth/auth.handlers.js';
 import { createJwtUtils } from './shared/utils/jwt.js';
 import { createPasswordUtils } from './shared/utils/password.js';
 import { createErrorHandler, createNotFoundHandler } from './shared/middleware/error.middleware.js';
-import { validateBody } from './shared/middleware/validation.middleware.js';
-import { registerSchema, loginSchema } from './auth/auth.schemas.js';
+import { validateBody, validateParams } from './shared/middleware/validation.middleware.js';
+import { 
+  registerSchema, 
+  loginSchema, 
+  refreshTokenSchema,
+  changePasswordSchema,
+  updateProfileSchema,
+  deactivateAccountSchema,
+  assignManagerSchema,
+  updateUserRoleSchema,
+  userIdParamsSchema
+} from './auth/auth.schemas.js';
 
 export async function createApp() {
   const config = getEnvironmentConfig();
@@ -53,6 +65,12 @@ export async function createApp() {
     passwordUtils,
   });
   
+  // Create handlers
+  const authHandlers = createAuthHandlers({
+    authService,
+    logger,
+  });
+  
   // Create Express app
   const app = express();
   
@@ -61,6 +79,7 @@ export async function createApp() {
   app.use(cors());
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true }));
+  app.use(cookieParser());
   app.use(addCorrelationId());
   app.use(createRequestLogger(logger));
   
@@ -73,32 +92,52 @@ export async function createApp() {
     });
   });
   
-  // Auth routes for testing
-  app.post('/auth/register', validateBody(registerSchema), async (req, res, next) => {
-    try {
-      const user = await authService.registerUser(req.body);
-      res.status(201).json({
-        success: true,
-        message: 'User registered successfully',
-        data: { user },
-      });
-    } catch (error) {
-      next(error);
-    }
-  });
+  // Authentication routes
+  app.post('/auth/register', validateBody(registerSchema), authHandlers.registerUser);
+  app.post('/auth/login', validateBody(loginSchema), authHandlers.loginUser);
+  app.post('/auth/refresh', validateBody(refreshTokenSchema), authHandlers.refreshToken);
   
-  app.post('/auth/login', validateBody(loginSchema), async (req, res, next) => {
-    try {
-      const result = await authService.loginUser(req.body);
-      res.json({
-        success: true,
-        message: 'Login successful',
-        data: result,
-      });
-    } catch (error) {
-      next(error);
-    }
-  });
+  // Protected user routes (these would normally require authentication middleware)
+  app.put('/auth/users/:userId/password', 
+    validateParams(userIdParamsSchema), 
+    validateBody(changePasswordSchema), 
+    authHandlers.changePassword
+  );
+  
+  app.put('/auth/users/:userId/profile', 
+    validateParams(userIdParamsSchema), 
+    validateBody(updateProfileSchema), 
+    authHandlers.updateProfile
+  );
+  
+  app.get('/auth/users/:userId/profile', 
+    validateParams(userIdParamsSchema), 
+    authHandlers.getUserProfile
+  );
+  
+  app.delete('/auth/users/:userId', 
+    validateParams(userIdParamsSchema), 
+    validateBody(deactivateAccountSchema), 
+    authHandlers.deactivateAccount
+  );
+  
+  // Manager routes
+  app.put('/auth/users/:userId/manager', 
+    validateParams(userIdParamsSchema), 
+    validateBody(assignManagerSchema), 
+    authHandlers.assignManager
+  );
+  
+  app.get('/auth/managers/:managerId/users', 
+    validateParams(userIdParamsSchema), 
+    authHandlers.getUsersByManager
+  );
+  
+  app.put('/auth/users/:userId/role', 
+    validateParams(userIdParamsSchema), 
+    validateBody(updateUserRoleSchema), 
+    authHandlers.updateUserRole
+  );
   
   // Error handling middleware (must be last)
   app.use(createNotFoundHandler());
@@ -113,6 +152,9 @@ export async function createApp() {
     db,
     services: {
       authService,
+    },
+    handlers: {
+      authHandlers,
     },
     healthStatus: validationResult,
   };

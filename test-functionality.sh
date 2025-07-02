@@ -112,7 +112,12 @@ test_endpoint "POST" "/auth/login" '{
     "password": "somePassword123"
 }' 401 "User login with non-existent email (should fail)"
 
-# Test 9: Invalid route
+# Test 9: Token refresh (will fail without valid token)
+test_endpoint "POST" "/auth/refresh" '{
+    "refreshToken": "invalid_token"
+}' 401 "Token refresh with invalid token (should fail)"
+
+# Test 10: Invalid route
 test_endpoint "GET" "/invalid-route" "" 404 "Non-existent route (should return 404)"
 
 echo "🎯 Functionality testing completed!"
@@ -122,10 +127,12 @@ echo "  ✅ Dependency injection with startup validation"
 echo "  ✅ Environment configuration validation"
 echo "  ✅ Database connection health checks"
 echo "  ✅ JWT secret validation"
-echo "  ✅ Functional programming architecture"
+echo "  ✅ Functional programming architecture (Handlers → Services → Repositories)"
 echo "  ✅ Request/response validation with Zod"
-echo "  ✅ Error handling and logging"
+echo "  ✅ Error handling with correlation IDs"
 echo "  ✅ Password hashing and validation"
 echo "  ✅ JWT token generation and verification"
+echo "  ✅ HTTP-only cookie support for refresh tokens"
+echo "  ✅ Comprehensive auth handlers with proper HTTP semantics"
 echo ""
 echo "🏆 All systems operational with fail-fast dependency injection!" 

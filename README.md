@@ -23,9 +23,14 @@ This application implements **fail-fast dependency injection** - the server will
 Environment Config → Logger, Database, Utils
 Database + Logger → Repositories  
 Repositories + Utils + Logger → Services
-Services → Handlers
+Services + Logger → Handlers
 All Dependencies → Express App (only if validation passes)
 ```
+
+#### 3-Layer Architecture:
+- **Handlers**: HTTP request/response handling, validation, formatting
+- **Services**: Business logic, authentication, user management
+- **Repositories**: Data access, database operations
 
 ## 🚀 Quick Start
 
@@ -95,8 +100,24 @@ GET /health
 
 ### Authentication
 ```http
-POST /auth/register
-POST /auth/login
+POST /auth/register     # User registration
+POST /auth/login        # User login
+POST /auth/refresh      # Token refresh
+```
+
+### User Management
+```http
+PUT  /auth/users/:userId/password    # Change password
+PUT  /auth/users/:userId/profile     # Update profile
+GET  /auth/users/:userId/profile     # Get profile
+DELETE /auth/users/:userId           # Deactivate account
+```
+
+### Manager Operations
+```http
+PUT  /auth/users/:userId/manager     # Assign manager
+GET  /auth/managers/:managerId/users # Get team members
+PUT  /auth/users/:userId/role        # Update user role
 ```
 
 ## 🔧 Dependency Injection Details
@@ -198,7 +219,14 @@ src/
 │   ├── middleware/       # Express middleware
 │   └── utils/           # Utility functions
 ├── auth/                # Authentication domain
-└── app.ts              # Application assembly with DI
+│   ├── auth.handlers.ts  # HTTP handlers (controllers)
+│   ├── auth.services.ts  # Business logic
+│   ├── auth.repositories.ts # Data access
+│   └── auth.schemas.ts   # Validation schemas
+├── db/
+│   └── schema.ts        # Database schema
+├── app.ts              # Application assembly with DI
+└── server.ts           # Server entry point
 ```
 
 ## 🔧 Development

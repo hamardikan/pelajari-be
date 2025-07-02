@@ -19,11 +19,13 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.50.2",
     "@types/bcryptjs": "^2.4.6",
+    "@types/cookie-parser": "^1.4.9",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
     "@types/jsonwebtoken": "^9.0.10",
     "axios-retry": "^4.5.0",
     "bcryptjs": "^3.0.2",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "drizzle-kit": "^0.31.4",
     "drizzle-orm": "^0.44.2",
