@@ -14,6 +14,8 @@ import type {
 } from './idp.schemas.js';
 import type { CompetencyGapData, IndividualDevelopmentPlanData } from '../db/schema.js';
 import { createBusinessLogicError, createNotFoundError } from '../shared/middleware/error.middleware.js';
+import * as mammoth from 'mammoth';
+import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -42,6 +44,7 @@ function resolveWorkerPath(workerName: string): string {
 
 export type GapAnalysisResult = {
   analysisId: string;
+  idpId: string;
   status: 'processing' | 'completed' | 'failed';
   message: string;
 };
@@ -79,15 +82,16 @@ export type ImpactMeasurementResult = {
 export type IDPService = {
   // Tahap 1: Analisis Kesenjangan Kompetensi
   analyzeCompetencyGaps: (frameworkData: JobCompetencyFrameworkData, employeeData: EmployeeData, userId: string) => Promise<GapAnalysisResult>;
-  analyzeCompetencyGapsFromFiles: (frameworkFile: Express.Multer.File, employeeFile: Express.Multer.File, userId: string) => Promise<GapAnalysisResult>;
-  getGapAnalysisByEmployeeId: (employeeId: string) => Promise<CompetencyGapRecord>;
+  analyzeCompetencyGapsFromFiles: (frameworkFile: Express.Multer.File, employeeFile: Express.Multer.File, userId: string, employeeId?: string) => Promise<GapAnalysisResult>;
+  getGapAnalysisByEmployeeId: (employeeId: string, requestingUserId: string) => Promise<CompetencyGapRecord>;
+  listGapAnalyses: (requestingUserId: string, employeeId?: string) => Promise<CompetencyGapRecord[]>;
   
   // Tahap 2: Pemetaan Talenta 9-Box Grid
   mapTalentTo9Box: (employeeId: string, kpiScore: number, assessmentScore: number) => Promise<NineBoxClassification>;
   
   // Tahap 3: Pembuatan IDP
   generateIDP: (employeeId: string, userId: string) => Promise<IDPGenerationResult>;
-  getIDPByEmployeeId: (employeeId: string) => Promise<IndividualDevelopmentPlanRecord>;
+  getIDPByEmployeeId: (employeeId: string, requestingUserId: string) => Promise<IndividualDevelopmentPlanRecord>;
   
   // Tahap 4: Eksekusi & Pengukuran Dampak
   approveIDP: (idpId: string, approvalData: ApproveIDPData) => Promise<IndividualDevelopmentPlanRecord>;
@@ -157,33 +161,41 @@ export function createIDPService(
 
               // Store the gap analysis result
               const newAnalysis = await idpRepository.createGapAnalysis(gapAnalysisData);
-              
-              // Also update the user's Nine-Box classification if calculated
-              if (message.data.nineBoxClassification) {
-                await mapTalentTo9Box(
-                  gapAnalysisData.employeeId, 
-                  employeeData.kpiScore, 
-                  employeeData.assessmentResults.potentialScore
-                );
-              }
-              
-              logger.info({ 
-                userId, 
-                analysisId: newAnalysis.id,
-                employeeName: employeeData.employeeName 
-              }, 'Gap analysis completed successfully');
 
+              // ---- START NEW ONE-SHOT LOGIC ----
+
+              // 1. Map to 9-Box Grid
+              const { kpiScore, potentialScore } = message.data;
+              if (typeof kpiScore === 'number' && typeof potentialScore === 'number') {
+                await mapTalentTo9Box(gapAnalysisData.employeeId, kpiScore, potentialScore);
+              }
+
+              // 2. Generate the IDP immediately
+              const idpResult = await generateIDP(gapAnalysisData.employeeId, userId);
+
+              logger.info({
+                  userId,
+                  analysisId: newAnalysis.id,
+                  idpId: idpResult.idpId,
+                  employeeName: employeeData.employeeName
+              }, 'One-shot process completed: Gap analysis, 9-box, and IDP generated.');
+
+              // 3. Resolve with both IDs
               resolve({
                 analysisId: newAnalysis.id,
+                idpId: idpResult.idpId, // Return the new IDP ID
                 status: 'completed',
-                message: 'Gap analysis completed successfully'
+                message: 'Gap analysis and IDP generation completed successfully',
               });
+
+              // ---- END NEW ONE-SHOT LOGIC ----
+
             } catch (dbError) {
               logger.error({ 
                 userId, 
                 employeeName: employeeData.employeeName,
                 error: dbError 
-              }, 'Failed to save gap analysis to database');
+              }, 'Failed during one-shot gap analysis and IDP generation');
               
               reject(dbError);
             }
@@ -227,37 +239,139 @@ export function createIDPService(
   async function analyzeCompetencyGapsFromFiles(
     frameworkFile: Express.Multer.File,
     employeeFile: Express.Multer.File,
-    userId: string
+    userId: string,
+    employeeId?: string
   ): Promise<GapAnalysisResult> {
     try {
       logger.info({ userId }, 'Parsing uploaded files for gap analysis');
 
-      const frameworkContent = frameworkFile.buffer.toString('utf-8');
-      const employeeContent = employeeFile.buffer.toString('utf-8');
+      // Helper function to extract plain text from an uploaded file
+      const extractText = async (file: Express.Multer.File): Promise<string> => {
+        if (file.mimetype === 'application/pdf') {
+          const data = await pdfParse(file.buffer as Buffer);
+          return data.text;
+        } else if (file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+          const { value } = await mammoth.extractRawText({ buffer: file.buffer });
+          return value;
+        }
+        // Fallback: treat as UTF-8 text
+        return file.buffer.toString('utf-8');
+      };
 
-      // Attempt to parse content as JSON. If this fails, let the error propagate.
-      const frameworkData = JSON.parse(frameworkContent) as JobCompetencyFrameworkData;
-      const employeeData = JSON.parse(employeeContent) as EmployeeData;
+      // Extract text concurrently
+      const [frameworkText, employeeText] = await Promise.all([
+        extractText(frameworkFile),
+        extractText(employeeFile),
+      ]);
 
-      return await analyzeCompetencyGaps(frameworkData, employeeData, userId);
+      // Dynamically determine worker path (reuse helper)
+      const workerPath = resolveWorkerPath('idp');
+
+      logger.info({ userId }, 'Starting AI worker for gap analysis with extracted text');
+
+      const worker = new Worker(workerPath, {
+        workerData: {
+          type: 'gap-analysis',
+          frameworkText,
+          employeeText,
+          employeeName: employeeFile.originalname.split('.')[0],
+          jobTitle: frameworkFile.originalname.split('.')[0],
+          employeeId,
+          userId,
+        },
+      });
+
+      // Wrap worker result in promise similar to analyzeCompetencyGaps
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          worker.terminate();
+          reject(new Error('Gap analysis AI processing timeout after 5 minutes'));
+        }, 5 * 60 * 1000);
+
+        worker.on('message', async (message) => {
+          clearTimeout(timeout);
+
+          if (!message.success) {
+            logger.error({ userId, error: message.error }, 'Worker failed to process gap analysis');
+            return reject(new Error(message.error));
+          }
+
+          try {
+            const gapAnalysisData: CompetencyGapData = {
+              ...message.data,
+              employeeId: employeeId || message.data.employeeId,
+              createdBy: userId,
+            };
+
+            // Store in DB
+            const newAnalysis = await idpRepository.createGapAnalysis(gapAnalysisData);
+
+            // ---- START NEW ONE-SHOT LOGIC ----
+
+            // 1. Map to 9-Box Grid
+            const { kpiScore, potentialScore } = message.data;
+            if (typeof kpiScore === 'number' && typeof potentialScore === 'number') {
+              await mapTalentTo9Box(gapAnalysisData.employeeId, kpiScore, potentialScore);
+            }
+
+            // 2. Generate the IDP immediately
+            const idpResult = await generateIDP(gapAnalysisData.employeeId, userId);
+
+            logger.info({
+                userId,
+                analysisId: newAnalysis.id,
+                idpId: idpResult.idpId
+            }, 'One-shot process completed: Gap analysis, 9-box, and IDP generated.');
+
+            // 3. Resolve with both IDs
+            resolve({
+              analysisId: newAnalysis.id,
+              idpId: idpResult.idpId, // Return the new IDP ID
+              status: 'completed',
+              message: 'Gap analysis and IDP generation completed successfully',
+            });
+
+            // ---- END NEW ONE-SHOT LOGIC ----
+
+          } catch (dbError) {
+            logger.error({ userId, error: dbError }, 'Failed during one-shot gap analysis and IDP generation');
+            reject(dbError);
+          }
+        });
+
+        worker.on('error', (error) => {
+          clearTimeout(timeout);
+          logger.error({ userId, error: error.message }, 'Worker error during gap analysis');
+          reject(error);
+        });
+
+        worker.on('exit', (code) => {
+          clearTimeout(timeout);
+          if (code !== 0) {
+            logger.error({ userId, exitCode: code }, 'Gap analysis worker exited with error');
+            reject(new Error(`Gap analysis worker exited with code ${code}`));
+          }
+        });
+      });
+
     } catch (error) {
       logger.error({ error, userId }, 'Error processing gap analysis from uploaded files');
       throw error;
     }
   }
 
-  async function getGapAnalysisByEmployeeId(employeeId: string): Promise<CompetencyGapRecord> {
+  async function getGapAnalysisByEmployeeId(employeeId: string, requestingUserId: string): Promise<CompetencyGapRecord> {
     try {
-      logger.debug({ employeeId }, 'Fetching gap analysis for employee');
+      logger.debug({ employeeId, requestingUserId }, 'Fetching gap analysis for employee');
       
-      const analysis = await idpRepository.getGapAnalysisByEmployeeId(employeeId);
+      const analysis = await idpRepository.getGapAnalysisByEmployeeId(employeeId, requestingUserId);
       if (!analysis) {
         throw createNotFoundError(`Gap analysis not found for employee ${employeeId}`);
       }
       
       return analysis;
     } catch (error) {
-      logger.error({ error, employeeId }, 'Error fetching gap analysis');
+      logger.error({ error, employeeId, requestingUserId }, 'Error fetching gap analysis');
       throw error;
     }
   }
@@ -338,7 +452,7 @@ export function createIDPService(
 
       // Get prerequisite data
       const [gapAnalysis, userProfile, developmentPrograms] = await Promise.all([
-        idpRepository.getGapAnalysisByEmployeeId(employeeId),
+        idpRepository.getGapAnalysisByEmployeeId(employeeId, userId),
         idpRepository.getUserById(employeeId),
         idpRepository.getDevelopmentPrograms()
       ]);
@@ -511,18 +625,18 @@ export function createIDPService(
     }
   }
 
-  async function getIDPByEmployeeId(employeeId: string): Promise<IndividualDevelopmentPlanRecord> {
+  async function getIDPByEmployeeId(employeeId: string, requestingUserId: string): Promise<IndividualDevelopmentPlanRecord> {
     try {
-      logger.debug({ employeeId }, 'Fetching IDP for employee');
+      logger.debug({ employeeId, requestingUserId }, 'Fetching IDP for employee');
       
-      const idp = await idpRepository.getIDPByEmployeeId(employeeId);
+      const idp = await idpRepository.getIDPByEmployeeId(employeeId, requestingUserId);
       if (!idp) {
         throw createNotFoundError(`IDP not found for employee ${employeeId}`);
       }
       
       return idp;
     } catch (error) {
-      logger.error({ error, employeeId }, 'Error fetching IDP');
+      logger.error({ error, employeeId, requestingUserId }, 'Error fetching IDP');
       throw error;
     }
   }
@@ -627,7 +741,7 @@ export function createIDPService(
       // This would typically involve triggering a new gap analysis and comparing with the previous one
       // For now, we'll implement a simplified version that compares historical gap analyses
 
-      const currentAnalysis = await idpRepository.getGapAnalysisByEmployeeId(employeeId);
+      const currentAnalysis = await idpRepository.getGapAnalysisByEmployeeId(employeeId, userId);
       if (!currentAnalysis) {
         throw createNotFoundError(`Current gap analysis not found for employee ${employeeId}`);
       }
@@ -722,11 +836,16 @@ export function createIDPService(
     }
   }
 
+  async function listGapAnalyses(requestingUserId: string, employeeId?: string): Promise<CompetencyGapRecord[]> {
+    return idpRepository.listGapAnalyses({ employeeId, requestingUserId });
+  }
+
   return {
     // Tahap 1: Analisis Kesenjangan Kompetensi
     analyzeCompetencyGaps,
     analyzeCompetencyGapsFromFiles,
     getGapAnalysisByEmployeeId,
+    listGapAnalyses,
     
     // Tahap 2: Pemetaan Talenta 9-Box Grid
     mapTalentTo9Box,

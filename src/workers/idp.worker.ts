@@ -14,8 +14,11 @@ import type {
 // Worker data structures for different IDP tasks
 interface GapAnalysisWorkerData {
   type: 'gap-analysis';
-  frameworkData: JobCompetencyFrameworkData;
-  employeeData: EmployeeData;
+  frameworkText: string;
+  employeeText: string;
+  employeeName: string;
+  jobTitle: string;
+  employeeId?: string;
   userId: string;
 }
 
@@ -147,143 +150,97 @@ function parseAIResponse(content: string): any {
 
 // Enhanced gap analysis with direct API call and fallback
 async function processGapAnalysis(data: GapAnalysisWorkerData) {
-  const { frameworkData, employeeData } = data;
-  
+  const { frameworkText, employeeText, employeeName, jobTitle, employeeId } = data;
+
   try {
-    // First try the optimized OpenRouter client method
-    const files = [
+    logger.info({ employeeName, jobTitle }, 'Starting gap analysis with unstructured text prompt');
+
+    const prompt = `
+      You are an expert HR analyst specializing in competency gap analysis.
+      Your task is to analyze two documents and produce a structured JSON output.
+
+      **DOCUMENT 1: Job Competency Framework**
+      ---
+      ${frameworkText}
+      ---
+
+      **DOCUMENT 2: Employee Performance Data**
+      ---
+      ${employeeText}
+      ---
+
+      **INSTRUCTIONS:**
+      1.  Read both documents carefully to understand the required competencies for the job and the employee's current performance.
+      2.  Compare the employee's data against the job framework to identify gaps.
+      3.  Determine the current and required proficiency levels (e.g., Basic, Intermediate, Advanced) for each competency.
+      4.  Calculate a gap level (0 for no gap, 1 for a minor gap, 2 for a major gap).
+      5.  Provide a priority for closing each gap (Low, Medium, High).
+      6.  Generate a final JSON object containing the full analysis.
+
+      **CRITICAL:** You must return ONLY a single, valid JSON object. Do not include any explanatory text, markdown code blocks (e.g., fenced code blocks), or any other characters outside of the JSON structure.
+
+      Required top-level keys:
+      * employeeId (string)
+      * employeeName (string)
+      * jobTitle (string)
+      * analysisDate (YYYY-MM-DD)
+      * kpiScore (number 0-100 parsed from the employee document)
+      * potentialScore (number 0-100 parsed from the assessment results)
+      * gaps (array, see below)
+      * overallGapScore (number 0-100)
+      * recommendations (array of strings)
+
+      Example structure:
       {
-        fileName: `framework-${frameworkData.jobTitle.replace(/\s+/g, '_')}.json`,
-        fileBuffer: Buffer.from(JSON.stringify(frameworkData, null, 2)),
-      },
-      {
-        fileName: `employee-${employeeData.employeeName.replace(/\s+/g, '_')}.json`,
-        fileBuffer: Buffer.from(JSON.stringify(employeeData, null, 2)),
-      },
-    ];
-    
-    logger.info({ 
-      employeeName: employeeData.employeeName,
-      jobTitle: frameworkData.jobTitle 
-    }, 'Attempting gap analysis with OpenRouter client');
-    
-    return await openRouterClient.generateGapAnalysisFromFiles(files);
-    
-  } catch (clientError) {
-    logger.warn({ 
-      error: clientError instanceof Error ? clientError.message : 'Unknown error',
-      employeeName: employeeData.employeeName 
-    }, 'OpenRouter client failed, trying fallback prompt method');
-    
-    // Fallback to direct prompt-based approach with enhanced parsing
-    const fallbackPrompt = `You are an expert HR analyst. Perform a competency gap analysis based on the following data:
+        "employeeId": "${employeeId ?? 'a-generated-uuid'}",
+        "employeeName": "${employeeName}",
+        "jobTitle": "${jobTitle}",
+        "analysisDate": "2025-07-03",
+        "kpiScore": 78,
+        "potentialScore": 85,
+        "gaps": [
+          {
+            "competency": "Strategic Planning",
+            "category": "managerial",
+            "requiredLevel": "Advanced",
+            "currentLevel": "Intermediate",
+            "gapLevel": 1,
+            "description": "...",
+            "priority": "Medium"
+          }
+        ],
+        "overallGapScore": 69,
+        "recommendations": ["…"]
+      }
+    `;
 
-**JOB COMPETENCY FRAMEWORK:**
-Job Title: ${frameworkData.jobTitle}
+    const result = await resilientAIProcessing('gap-analysis-unstructured', prompt);
 
-Managerial Competencies:
-${frameworkData.managerialCompetencies.map(comp => 
-  `- ${comp.name}: Required Level = ${comp.expectedLevel} (${comp.description || 'No description'})`
-).join('\n')}
-
-Functional Competencies:
-${frameworkData.functionalCompetencies.map(comp => 
-  `- ${comp.name}: Required Level = ${comp.expectedLevel} (${comp.description || 'No description'})`
-).join('\n')}
-
-**EMPLOYEE ASSESSMENT:**
-Employee ID: ${employeeData.employeeId || 'emp-' + Date.now()}
-Employee Name: ${employeeData.employeeName}
-Current Job Title: ${employeeData.currentJobTitle}
-KPI Score: ${employeeData.kpiScore}/100
-Performance Summary: ${employeeData.performanceSummary}
-
-Assessment Results:
-- Potential Score: ${employeeData.assessmentResults.potentialScore}/100
-- Summary: ${employeeData.assessmentResults.summary}
-
-Competency Scores:
-${employeeData.assessmentResults.competencyScores?.map(score => 
-  `- ${score.competencyName}: ${score.score}/100`
-).join('\n') || 'No specific competency scores provided'}
-
-**CRITICAL:** Return ONLY valid JSON without any markdown formatting, code blocks, or explanatory text:
-
-{
-  "employeeId": "${employeeData.employeeId || 'emp-' + Date.now()}",
-  "employeeName": "${employeeData.employeeName}",
-  "jobTitle": "${frameworkData.jobTitle}",
-  "analysisDate": "${new Date().toISOString().split('T')[0]}",
-  "gaps": [
-    {
-      "competency": "Competency Name",
-      "category": "managerial or functional",
-      "requiredLevel": "Basic, Intermediate, or Advanced",
-      "currentLevel": "Basic, Intermediate, or Advanced",
-      "gapLevel": 0,
-      "description": "Detailed gap description",
-      "priority": "Low, Medium, or High"
-    }
-  ],
-  "overallGapScore": 50,
-  "recommendations": [
-    "Recommendation 1",
-    "Recommendation 2"
-  ]
-}
-
-Return the JSON object directly without any formatting or explanation.`;
-
-    const result = await resilientAIProcessing('gap-analysis-fallback', fallbackPrompt);
-    
     if (!result.success) {
       throw result.error || new Error('Gap analysis AI processing failed');
     }
 
     try {
-      // Use enhanced parsing that handles markdown formatting
       const parsedResult = parseAIResponse(result.data);
-      
-      // Validate the structure
+
       if (!parsedResult.gaps || !Array.isArray(parsedResult.gaps)) {
-        throw new Error('Invalid gap analysis response structure');
+        throw new Error('Invalid gap analysis response structure from AI');
       }
-      
-      // Add missing employeeId if not present
-      if (!parsedResult.employeeId) {
-        parsedResult.employeeId = employeeData.employeeId || 'emp-' + Date.now();
-      }
-      
-      // Validate each gap object
-      for (let i = 0; i < parsedResult.gaps.length; i++) {
-        const gap = parsedResult.gaps[i];
-        const requiredFields = ['competency', 'category', 'requiredLevel', 'currentLevel', 'gapLevel', 'description', 'priority'];
-        for (const field of requiredFields) {
-          if (!(field in gap)) {
-            logger.error({ 
-              gapIndex: i, 
-              gap, 
-              missingField: field 
-            }, 'Gap object missing required field');
-            throw new Error(`Gap analysis item ${i} missing required field: ${field}`);
-          }
-        }
-      }
-      
-      logger.info({ 
-        employeeName: employeeData.employeeName,
-        gapsFound: parsedResult.gaps.length 
-      }, 'Gap analysis completed successfully with fallback method');
-      
+
+      logger.info({ employeeName, gapsFound: parsedResult.gaps.length }, 'Gap analysis from unstructured text completed successfully');
+
       return parsedResult;
-      
+
     } catch (parseError: any) {
-      logger.error({ 
-        parseError: parseError && parseError.message ? parseError.message : String(parseError), 
+      logger.error({
+        parseError: parseError && parseError.message ? parseError.message : String(parseError),
         response: result.data.substring(0, 1000) + '...'
       }, 'Failed to parse gap analysis JSON response');
       throw new Error(`Invalid JSON response from AI for gap analysis: ${parseError && parseError.message ? parseError.message : String(parseError)}`);
     }
+  } catch (error) {
+    logger.error({ error: error instanceof Error ? error.message : String(error), employeeName }, 'Failed to process gap analysis from unstructured text');
+    throw error;
   }
 }
 

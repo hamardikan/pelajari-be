@@ -99,8 +99,7 @@ function createRoleplayHandlers(dependencies: RoleplayHandlerDependencies): Role
     const correlationId = (req as RequestWithCorrelation).correlationId;
     
     try {
-      // For now, we'll use a dummy user ID. In production, this would come from authentication
-      const userId = 'user-123'; // TODO: Get from authentication middleware
+      const userId = (req as any).user.userId;
       const { scenarioId } = req.params;
       
       if (!scenarioId) {
@@ -138,8 +137,7 @@ function createRoleplayHandlers(dependencies: RoleplayHandlerDependencies): Role
     const correlationId = (req as RequestWithCorrelation).correlationId;
     
     try {
-      // For now, we'll use a dummy user ID. In production, this would come from authentication
-      const userId = 'user-123'; // TODO: Get from authentication middleware
+      const userId = (req as any).user.userId;
       const { sessionId } = req.params;
       const { message } = req.body; // Should be validated by middleware
       
@@ -178,8 +176,7 @@ function createRoleplayHandlers(dependencies: RoleplayHandlerDependencies): Role
     const correlationId = (req as RequestWithCorrelation).correlationId;
     
     try {
-      // For now, we'll use a dummy user ID. In production, this would come from authentication
-      const userId = 'user-123'; // TODO: Get from authentication middleware
+      const userId = (req as any).user.userId;
       const { sessionId } = req.params;
       
       if (!sessionId) {
@@ -217,8 +214,7 @@ function createRoleplayHandlers(dependencies: RoleplayHandlerDependencies): Role
     const correlationId = (req as RequestWithCorrelation).correlationId;
     
     try {
-      // For now, we'll use a dummy user ID. In production, this would come from authentication
-      const userId = 'user-123'; // TODO: Get from authentication middleware
+      const userId = (req as any).user.userId;
       const { sessionId } = req.params;
       
       if (!sessionId) {
@@ -251,8 +247,7 @@ function createRoleplayHandlers(dependencies: RoleplayHandlerDependencies): Role
     const correlationId = (req as RequestWithCorrelation).correlationId;
     
     try {
-      // For now, we'll use a dummy user ID. In production, this would come from authentication
-      const userId = 'user-123'; // TODO: Get from authentication middleware
+      const userId = (req as any).user.userId;
       const options = (req as any).validatedQuery || req.query; // Use validated query data
 
       logger.debug({ correlationId, userId, options }, 'Fetching user roleplay sessions');
@@ -285,8 +280,7 @@ function createRoleplayHandlers(dependencies: RoleplayHandlerDependencies): Role
     const correlationId = (req as RequestWithCorrelation).correlationId;
     
     try {
-      // For now, we'll use a dummy user ID. In production, this would come from authentication
-      const userId = 'user-123'; // TODO: Get from authentication middleware
+      const userId = (req as any).user.userId;
       const { sessionId } = req.params;
       
       if (!sessionId) {
@@ -356,8 +350,7 @@ function createRoleplayHandlers(dependencies: RoleplayHandlerDependencies): Role
     const correlationId = (req as RequestWithCorrelation).correlationId;
     
     try {
-      // For now, we'll use a dummy user ID. In production, this would come from authentication
-      const userId = 'user-123'; // TODO: Get from authentication middleware
+      const userId = (req as any).user.userId;
 
       logger.debug({ correlationId, userId }, 'Fetching user roleplay statistics');
       

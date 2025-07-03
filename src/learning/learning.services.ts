@@ -15,6 +15,7 @@ import type {
   UserProgressQuery 
 } from './learning.schemas.js';
 import { createBusinessLogicError, createNotFoundError } from '../shared/middleware/error.middleware.js';
+import fs from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -87,6 +88,31 @@ export type LearningService = {
   }>;
 };
 
+// Helper to dynamically resolve worker file (supports TS in dev and JS in prod)
+function resolveWorkerPath(workerName: string): string {
+  const possiblePaths = [
+    // Production / compiled JS (dist or compiled within src)
+    path.join(__dirname, '..', 'workers', `${workerName}.worker.js`),
+    path.join(process.cwd(), 'dist', 'workers', `${workerName}.worker.js`),
+    // Development TypeScript sources (ts-node / tsx)
+    path.join(__dirname, '..', 'workers', `${workerName}.worker.ts`),
+    path.join(process.cwd(), 'src', 'workers', `${workerName}.worker.ts`),
+  ];
+
+  for (const p of possiblePaths) {
+    try {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename
+      if (fs.existsSync(p)) {
+        return p;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  // Fallback to JS path inside workers dir
+  return path.join(__dirname, '..', 'workers', `${workerName}.worker.js`);
+}
+
 export function createLearningService(
   learningRepository: LearningRepository,
   documentService: DocumentService, // NEW: Add document service
@@ -115,14 +141,16 @@ export function createLearningService(
       // STEP 2: Process with AI using the document
       logger.info({ userId, fileName: file.originalname, documentId: document.id }, 'Starting AI processing of document');
 
-      // Start worker for AI processing
-      const workerPath = path.join(__dirname, '../workers/learning.worker.js');
+      // Start worker for AI processing – tsx (in dev) or plain Node (in prod) will
+      // transparently handle either a TypeScript or pre-compiled JavaScript file.
+      const workerPath = resolveWorkerPath('learning');
+
       const worker = new Worker(workerPath, {
-        workerData: { 
+        workerData: {
           documentId: document.id,
           pdfBuffer: file.buffer,
           fileName: file.originalname,
-          userId 
+          userId,
         },
       });
 

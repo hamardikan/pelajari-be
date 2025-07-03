@@ -465,42 +465,27 @@ Submit response for evaluation question.
 
 ## Individual Development Plan (IDP)
 
-### Analyze Competency Gaps
-Perform AI-powered competency gap analysis using PDF documents or JSON data.
+### Competency Gap Analysis (One-Shot IDP Generation)
+Perform complete IDP generation in a single operation: analyzes competency gaps, maps talent to 9-box grid, and generates Individual Development Plan.
 
 **POST** `/api/idp/gap-analysis`
 
-#### Option 1: Using PDF Files (Recommended)
-**Content-Type:** `multipart/form-data`
+**Content-Type:** `multipart/form-data` or `application/json`
 
+#### Option 1: File Upload
 **Form Data:**
-- `frameworkFile`: PDF file containing job competency framework
-- `employeeFile`: PDF file containing employee performance data
-- `metadata`: Optional JSON string with additional context
+- `frameworkFile`: PDF/DOCX file containing competency framework
+- `employeeFile`: PDF/DOCX file containing employee data
+- `employeeId`: Optional employee UUID
 
-**Example:**
-```bash
-curl -X POST /api/idp/gap-analysis \
-  -H "Authorization: Bearer {token}" \
-  -F "frameworkFile=@competency_framework.pdf" \
-  -F "employeeFile=@employee_performance.pdf" \
-  -F 'metadata={"jobTitle":"Software Developer","employeeName":"John Doe"}'
-```
-
-#### Option 2: Using JSON Data
-**Content-Type:** `application/json`
-
+#### Option 2: JSON Payload
 **Request Body:**
 ```json
 {
   "frameworkData": {
     "jobTitle": "Software Developer",
     "managerialCompetencies": [
-      {
-        "name": "Team Leadership",
-        "expectedLevel": "Intermediate",
-        "description": "Ability to lead and guide team members"
-      }
+      { "name": "Team Leadership", "description": "Ability to lead and guide team members" }
     ],
     "functionalCompetencies": [
       {
@@ -539,11 +524,12 @@ curl -X POST /api/idp/gap-analysis \
 ```json
 {
   "success": true,
-  "message": "Gap analysis initiated successfully",
+  "message": "Gap analysis and IDP generation initiated successfully",
   "data": {
     "analysisId": "uuid",
+    "idpId": "uuid",
     "status": "completed",
-    "message": "Gap analysis completed successfully"
+    "message": "Gap analysis and IDP generation completed successfully"
   }
 }
 ```
@@ -608,6 +594,8 @@ Classify employee on 9-Box Grid.
 
 ### Generate IDP
 Create comprehensive development plan.
+
+> **Note:** IDP generation is now automatically included in the one-shot gap analysis process. This endpoint can still be used if you want to regenerate an IDP for an employee who already has a gap analysis.
 
 **POST** `/api/idp/generate/{employeeId}`
 
@@ -724,6 +712,36 @@ Assess the effectiveness of development programs.
   }
 }
 ```
+
+### List Gap Analyses
+Retrieve all competency gap analyses created by the authenticated user, or optionally those for a specific employee.
+
+**GET** `/api/idp/gap-analysis`
+
+**Query Parameters:**
+- `employeeId` *(optional)*: Filter analyses for a specific employee UUID.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "analyses": [
+      {
+        "id": "uuid",
+        "employeeId": "uuid-of-employee",
+        "jobTitle": "Project Manager",
+        "overallGapScore": 69,
+        "createdAt": "2025-07-03T08:45:58.000Z"
+      }
+    ]
+  }
+}
+```
+
+Access rules:
+• Returns all records where `createdBy` equals the current user.
+• If `employeeId` is supplied, results are further filtered by that employee.
 
 ---
 

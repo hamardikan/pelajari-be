@@ -13,6 +13,7 @@ export type IDPHandlers = {
   // Tahap 1: Gap Analysis
   analyzeCompetencyGaps: (req: Request, res: Response, next: NextFunction) => void;
   getGapAnalysisByEmployeeId: (req: Request, res: Response, next: NextFunction) => void;
+  listGapAnalyses: (req: Request, res: Response, next: NextFunction) => void;
   
   // Tahap 2: Nine-Box Mapping
   mapTalentTo9Box: (req: Request, res: Response, next: NextFunction) => void;
@@ -40,7 +41,7 @@ function createIDPHandlers(dependencies: IDPHandlerDependencies): IDPHandlers {
     
     try {
       // For now, we'll use a dummy user ID. In production, this would come from authentication
-      const userId = 'user-123'; // TODO: Get from authentication middleware
+      const userId = (req as any).user.userId;
       
       const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
       let result;
@@ -51,10 +52,14 @@ function createIDPHandlers(dependencies: IDPHandlerDependencies): IDPHandlers {
         const frameworkFile = files.frameworkFile[0]!;
         const employeeFile = files.employeeFile[0]!;
 
+        // Capture employeeId if the client included it as a regular field in the multipart/form-data
+        const { employeeId: bodyEmployeeId } = req.body as { employeeId?: string };
+
         result = await idpService.analyzeCompetencyGapsFromFiles(
           frameworkFile,
           employeeFile,
-          userId
+          userId,
+          bodyEmployeeId
         );
       } else {
         const { frameworkData, employeeData } = req.body;
@@ -73,13 +78,14 @@ function createIDPHandlers(dependencies: IDPHandlerDependencies): IDPHandlers {
         correlationId, 
         userId, 
         analysisId: result.analysisId,
+        idpId: result.idpId, // Log the new ID
         status: result.status 
-      }, 'Gap analysis request processed');
+      }, 'Gap analysis and IDP generation request processed');
       
       res.status(201).json({
         success: true,
-        message: 'Gap analysis initiated successfully',
-        data: result,
+        message: 'Gap analysis and IDP generation initiated successfully',
+        data: result, // result now contains both IDs
         correlationId,
       });
     } catch (error) {
@@ -110,7 +116,8 @@ function createIDPHandlers(dependencies: IDPHandlerDependencies): IDPHandlers {
       
       logger.debug({ correlationId, employeeId }, 'Fetching gap analysis for employee');
       
-      const analysis = await idpService.getGapAnalysisByEmployeeId(employeeId);
+      const requestingUserId = (req as any).user.userId;
+      const analysis = await idpService.getGapAnalysisByEmployeeId(employeeId, requestingUserId);
       
       res.json({
         success: true,
@@ -184,7 +191,7 @@ function createIDPHandlers(dependencies: IDPHandlerDependencies): IDPHandlers {
     
     try {
       // For now, we'll use a dummy user ID. In production, this would come from authentication
-      const userId = 'user-123'; // TODO: Get from authentication middleware
+      const userId = (req as any).user.userId;
       const { employeeId } = req.params;
 
       if (!employeeId) {
@@ -245,7 +252,8 @@ function createIDPHandlers(dependencies: IDPHandlerDependencies): IDPHandlers {
       
       logger.debug({ correlationId, employeeId }, 'Fetching IDP for employee');
       
-      const idp = await idpService.getIDPByEmployeeId(employeeId);
+      const requestingUserId = (req as any).user.userId;
+      const idp = await idpService.getIDPByEmployeeId(employeeId, requestingUserId);
       
       res.json({
         success: true,
@@ -366,7 +374,7 @@ function createIDPHandlers(dependencies: IDPHandlerDependencies): IDPHandlers {
     
     try {
       // For now, we'll use a dummy user ID. In production, this would come from authentication
-      const userId = 'user-123'; // TODO: Get from authentication middleware
+      const userId = (req as any).user.userId;
       const { employeeId } = req.params;
 
       if (!employeeId) {
@@ -440,7 +448,7 @@ function createIDPHandlers(dependencies: IDPHandlerDependencies): IDPHandlers {
     
     try {
       // For now, we'll use a dummy user ID. In production, this would come from authentication
-      const userId = 'user-123'; // TODO: Get from authentication middleware
+      const userId = (req as any).user.userId;
       const programData = req.body;
 
       logger.info({ 
@@ -475,6 +483,18 @@ function createIDPHandlers(dependencies: IDPHandlerDependencies): IDPHandlers {
     }
   }
 
+  async function listGapAnalyses(req: Request, res: Response, next: NextFunction): Promise<void> {
+    const correlationId = (req as RequestWithCorrelation).correlationId;
+    try {
+      const requestingUserId = (req as any).user.userId;
+      const { employeeId } = req.query as { employeeId?: string };
+      const analyses = await idpService.listGapAnalyses(requestingUserId, employeeId);
+      res.json({ success: true, message: 'Gap analyses retrieved', data: { analyses }, correlationId });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // Wrap all async functions with error handling
   return {
     analyzeCompetencyGaps: createAsyncErrorWrapper(analyzeCompetencyGaps),
@@ -487,6 +507,7 @@ function createIDPHandlers(dependencies: IDPHandlerDependencies): IDPHandlers {
     measureIDPImpact: createAsyncErrorWrapper(measureIDPImpact),
     getDevelopmentPrograms: createAsyncErrorWrapper(getDevelopmentPrograms),
     createDevelopmentProgram: createAsyncErrorWrapper(createDevelopmentProgram),
+    listGapAnalyses: createAsyncErrorWrapper(listGapAnalyses),
   };
 }
 

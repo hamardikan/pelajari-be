@@ -33,6 +33,7 @@ import { createOpenRouterClient } from './shared/utils/openrouter.js';
 import { createErrorHandler, createNotFoundHandler } from './shared/middleware/error.middleware.js';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
+import { createAuthMiddleware } from './shared/middleware/auth.middleware.js';
 
 export async function createApp() {
   const config = getEnvironmentConfig();
@@ -73,6 +74,7 @@ export async function createApp() {
     siteUrl: config.SITE_URL,
     siteName: config.SITE_NAME,
   }, logger);
+  const authMiddleware = createAuthMiddleware(jwtUtils);
   
   // Create repositories
   const authRepository = createAuthRepository(db, logger);
@@ -175,6 +177,9 @@ export async function createApp() {
   
   // Authentication routes
   app.use('/auth', createAuthRoutes(authHandlers));
+  
+  // Attach authentication middleware for all subsequent routes
+  app.use(authMiddleware);
   
   // Document routes
   app.use('/api/documents', createDocumentRoutes(documentHandlers));

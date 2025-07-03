@@ -45,9 +45,10 @@ export type UserRecord = {
 export type IDPRepository = {
   // Competency Gap Analysis
   createGapAnalysis: (analysisData: CompetencyGapData) => Promise<CompetencyGapRecord>;
-  getGapAnalysisByEmployeeId: (employeeId: string) => Promise<CompetencyGapRecord | null>;
+  getGapAnalysisByEmployeeId: (employeeId: string, requestingUserId?: string) => Promise<CompetencyGapRecord | null>;
   getGapAnalysisById: (id: string) => Promise<CompetencyGapRecord | null>;
   updateGapAnalysis: (id: string, analysisData: Partial<CompetencyGapData>) => Promise<CompetencyGapRecord>;
+  listGapAnalyses: (filters: { employeeId?: string; requestingUserId: string }) => Promise<CompetencyGapRecord[]>;
   
   // Development Programs
   getDevelopmentPrograms: () => Promise<DevelopmentProgramRecord[]>;
@@ -58,13 +59,13 @@ export type IDPRepository = {
   
   // Individual Development Plans
   createIDP: (idpData: IndividualDevelopmentPlanData) => Promise<IndividualDevelopmentPlanRecord>;
-  getIDPByEmployeeId: (employeeId: string) => Promise<IndividualDevelopmentPlanRecord | null>;
+  getIDPByEmployeeId: (employeeId: string, requestingUserId?: string) => Promise<IndividualDevelopmentPlanRecord | null>;
   getIDPById: (id: string) => Promise<IndividualDevelopmentPlanRecord | null>;
   updateIDP: (id: string, idpData: Partial<IndividualDevelopmentPlanData>) => Promise<IndividualDevelopmentPlanRecord>;
   deleteIDP: (id: string) => Promise<void>;
   
   // User Profile Management (for Nine-Box classification)
-  updateUserProfile: (userId: string, profileData: Partial<UserData['profileData']>) => Promise<UserRecord>;
+  updateUserProfile: (userIdentifier: string, profileData: Partial<UserData['profileData']>) => Promise<UserRecord>;
   getUserById: (userId: string) => Promise<UserRecord | null>;
 };
 
@@ -108,14 +109,18 @@ export function createIDPRepository(db: Database, logger: Logger): IDPRepository
     }
   }
 
-  async function getGapAnalysisByEmployeeId(employeeId: string): Promise<CompetencyGapRecord | null> {
+  async function getGapAnalysisByEmployeeId(employeeId: string, requestingUserId?: string): Promise<CompetencyGapRecord | null> {
     try {
       logger.debug({ employeeId }, 'Finding gap analysis by employee ID');
       
+      const condition = requestingUserId
+        ? sql`(${competencyGaps.data}->>'employeeId' = ${employeeId} OR ${competencyGaps.data}->>'createdBy' = ${requestingUserId})`
+        : eq(sql`${competencyGaps.data}->>'employeeId'`, employeeId);
+
       const result = await db
         .select()
         .from(competencyGaps)
-        .where(eq(sql`${competencyGaps.data}->>'employeeId'`, employeeId))
+        .where(condition)
         .orderBy(sql`${competencyGaps.createdAt} DESC`)
         .limit(1);
 
@@ -194,6 +199,32 @@ export function createIDPRepository(db: Database, logger: Logger): IDPRepository
       return updatedAnalysis;
     } catch (error) {
       logger.error({ error, analysisId: id }, 'Error updating gap analysis');
+      throw error;
+    }
+  }
+
+  async function listGapAnalyses(filters: { employeeId?: string; requestingUserId: string }): Promise<CompetencyGapRecord[]> {
+    const { employeeId, requestingUserId } = filters;
+    try {
+      logger.debug({ employeeId, requestingUserId }, 'Listing gap analyses');
+      const whereCondition = employeeId
+        ? sql`(${competencyGaps.data}->>'employeeId' = ${employeeId} OR ${competencyGaps.data}->>'createdBy' = ${requestingUserId})`
+        : eq(sql`${competencyGaps.data}->>'createdBy'`, requestingUserId);
+
+      const result = await db
+        .select()
+        .from(competencyGaps)
+        .where(whereCondition)
+        .orderBy(sql`${competencyGaps.createdAt} DESC`);
+
+      return result.map(r => ({
+        id: r.id,
+        data: r.data as CompetencyGapData,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+      }));
+    } catch (error) {
+      logger.error({ error, filters }, 'Error listing gap analyses');
       throw error;
     }
   }
@@ -365,14 +396,18 @@ export function createIDPRepository(db: Database, logger: Logger): IDPRepository
     }
   }
 
-  async function getIDPByEmployeeId(employeeId: string): Promise<IndividualDevelopmentPlanRecord | null> {
+  async function getIDPByEmployeeId(employeeId: string, requestingUserId?: string): Promise<IndividualDevelopmentPlanRecord | null> {
     try {
       logger.debug({ employeeId }, 'Finding IDP by employee ID');
       
+      const condition = requestingUserId
+        ? sql`(${individualDevelopmentPlans.data}->>'employeeId' = ${employeeId} OR ${individualDevelopmentPlans.data}->>'createdBy' = ${requestingUserId})`
+        : eq(sql`${individualDevelopmentPlans.data}->>'employeeId'`, employeeId);
+
       const result = await db
         .select()
         .from(individualDevelopmentPlans)
-        .where(eq(sql`${individualDevelopmentPlans.data}->>'employeeId'`, employeeId))
+        .where(condition)
         .orderBy(sql`${individualDevelopmentPlans.createdAt} DESC`)
         .limit(1);
 
@@ -471,27 +506,54 @@ export function createIDPRepository(db: Database, logger: Logger): IDPRepository
   }
 
   // User Profile Management methods
-  async function updateUserProfile(userId: string, profileData: Partial<UserData['profileData']>): Promise<UserRecord> {
+  async function updateUserProfile(userIdentifier: string, profileData: Partial<UserData['profileData']>): Promise<UserRecord> {
     try {
-      logger.info({ userId }, 'Updating user profile for Nine-Box classification');
+      logger.info({ userIdentifier }, 'Updating user profile for Nine-Box classification');
       
+      // 1. Locate the correct user row ------------------------------------
+      let userRecord: UserRecord | null = null;
+
+      // Attempt primary-key lookup only if the identifier looks like a UUID
+      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      if (uuidPattern.test(userIdentifier)) {
+        userRecord = await getUserById(userIdentifier);
+      }
+
+      // Fallback: locate by employeeId stored inside JSONB
+      if (!userRecord) {
+        const result = await db
+          .select()
+          .from(users)
+          .where(sql`${users.data}->>'employeeId' = ${userIdentifier}`)
+          .limit(1);
+
+        if (result.length === 0) {
+          throw new Error('User not found for profile update');
+        }
+
+        userRecord = result[0] as typeof result[0] & { data: UserData };
+      }
+
+      // 2. Perform the JSONB merge update using the row's UUID -------------
+      const record = userRecord!; // Non-null after checks above
+
       await db
         .update(users)
         .set({
           data: sql`jsonb_set(${users.data}, '{profileData}', ${users.data}#>'{profileData}' || ${JSON.stringify(profileData)})`,
           updatedAt: new Date(),
         })
-        .where(eq(users.id, userId));
+        .where(eq(users.id, record.id));
 
-      const updatedUser = await getUserById(userId);
-      if (!updatedUser) {
-        throw new Error('User not found after profile update');
-      }
-
-      logger.info({ userId }, 'User profile updated successfully');
-      return updatedUser;
+      logger.info({ userId: record.id }, 'User profile updated successfully');
+      return {
+        id: record.id,
+        data: record.data as UserData,
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt,
+      };
     } catch (error) {
-      logger.error({ error, userId }, 'Error updating user profile');
+      logger.error({ error, userIdentifier }, 'Error updating user profile');
       throw error;
     }
   }
@@ -534,6 +596,7 @@ export function createIDPRepository(db: Database, logger: Logger): IDPRepository
     getGapAnalysisByEmployeeId,
     getGapAnalysisById,
     updateGapAnalysis,
+    listGapAnalyses,
     
     // Development Programs
     getDevelopmentPrograms,

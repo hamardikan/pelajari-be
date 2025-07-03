@@ -38,8 +38,7 @@ function createLearningHandlers(dependencies: LearningHandlerDependencies): Lear
     const correlationId = (req as RequestWithCorrelation).correlationId;
     
     try {
-      // For now, we'll use a dummy user ID. In production, this would come from authentication
-      const userId = 'user-123'; // TODO: Get from authentication middleware
+      const userId = (req as any).user.userId;
       
       if (!req.file) {
         res.status(400).json({
@@ -192,8 +191,7 @@ function createLearningHandlers(dependencies: LearningHandlerDependencies): Lear
     const correlationId = (req as RequestWithCorrelation).correlationId;
     
     try {
-      // For now, we'll use a dummy user ID. In production, this would come from authentication
-      const userId = 'user-123'; // TODO: Get from authentication middleware
+      const userId = (req as any).user.userId;
       const { moduleId } = req.params;
       
       if (!moduleId) {
@@ -232,8 +230,7 @@ function createLearningHandlers(dependencies: LearningHandlerDependencies): Lear
     const correlationId = (req as RequestWithCorrelation).correlationId;
     
     try {
-      // For now, we'll use a dummy user ID. In production, this would come from authentication
-      const userId = 'user-123'; // TODO: Get from authentication middleware
+      const userId = (req as any).user.userId;
       
       logger.info({ correlationId, userId, updateData: req.body }, 'Updating user progress');
       
@@ -267,8 +264,7 @@ function createLearningHandlers(dependencies: LearningHandlerDependencies): Lear
     const correlationId = (req as RequestWithCorrelation).correlationId;
     
     try {
-      // For now, we'll use a dummy user ID. In production, this would come from authentication
-      const userId = 'user-123'; // TODO: Get from authentication middleware
+      const userId = (req as any).user.userId;
       const { moduleId } = req.params;
       
       if (!moduleId) {
@@ -305,8 +301,7 @@ function createLearningHandlers(dependencies: LearningHandlerDependencies): Lear
     const correlationId = (req as RequestWithCorrelation).correlationId;
     
     try {
-      // For now, we'll use a dummy user ID. In production, this would come from authentication
-      const userId = 'user-123'; // TODO: Get from authentication middleware
+      const userId = (req as any).user.userId;
       
       logger.debug({ correlationId, userId, query: req.query }, 'Fetching user progress list');
       
@@ -336,8 +331,7 @@ function createLearningHandlers(dependencies: LearningHandlerDependencies): Lear
     const correlationId = (req as RequestWithCorrelation).correlationId;
     
     try {
-      // For now, we'll use a dummy user ID. In production, this would come from authentication
-      const userId = 'user-123'; // TODO: Get from authentication middleware
+      const userId = (req as any).user.userId;
       
       logger.info({ 
         correlationId, 
@@ -377,8 +371,7 @@ function createLearningHandlers(dependencies: LearningHandlerDependencies): Lear
     const correlationId = (req as RequestWithCorrelation).correlationId;
     
     try {
-      // For now, we'll use a dummy user ID. In production, this would come from authentication
-      const userId = 'user-123'; // TODO: Get from authentication middleware
+      const userId = (req as any).user.userId;
       
       logger.info({ 
         correlationId, 
@@ -454,8 +447,7 @@ function createLearningHandlers(dependencies: LearningHandlerDependencies): Lear
     const correlationId = (req as RequestWithCorrelation).correlationId;
     
     try {
-      // For now, we'll use a dummy user ID. In production, this would come from authentication
-      const userId = 'user-123'; // TODO: Get from authentication middleware
+      const userId = (req as any).user.userId;
       
       logger.debug({ correlationId, userId }, 'Fetching user statistics');
       

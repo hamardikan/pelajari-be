@@ -26,7 +26,7 @@ function createDocumentHandlers(dependencies: DocumentHandlerDependencies): Docu
     const correlationId = (req as RequestWithCorrelation).correlationId;
     
     try {
-      const userId = 'user-123'; // TODO: Get from authentication middleware
+      const userId = (req as any).user.userId;
       
       if (!req.file) {
         res.status(400).json({

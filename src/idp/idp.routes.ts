@@ -1,6 +1,10 @@
 import { Router } from 'express';
 import type { IDPHandlers } from './idp.handlers.js';
-import { validateBody, validateParams } from '../shared/middleware/validation.middleware.js';
+import {
+  validateBody,
+  validateParams,
+  validateConditionally,
+} from '../shared/middleware/validation.middleware.js';
 import {
   gapAnalysisInputSchema,
   employeeIdParamsSchema,
@@ -27,7 +31,16 @@ export function createIDPRoutes(idpHandlers: IDPHandlers): Router {
       { name: 'frameworkFile', maxCount: 1 },
       { name: 'employeeFile', maxCount: 1 },
     ]),
-    validateBody(gapAnalysisInputSchema.optional()),
+    validateConditionally(
+      (req) => {
+        const files = req.files as
+          | { [fieldname:string]: Express.Multer.File[] }
+          | undefined;
+        // Validate body ONLY if files are not present
+        return !files || !files.frameworkFile || !files.employeeFile;
+      },
+      gapAnalysisInputSchema
+    ),
     idpHandlers.analyzeCompetencyGaps
   );
 
@@ -89,6 +102,9 @@ export function createIDPRoutes(idpHandlers: IDPHandlers): Router {
     validateBody(developmentProgramSchema),
     idpHandlers.createDevelopmentProgram
   );
+
+  // list
+  router.get('/gap-analysis', idpHandlers.listGapAnalyses);
 
   return router;
 } 
