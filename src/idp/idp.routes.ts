@@ -9,14 +9,25 @@ import {
   updateIDPProgressSchema,
   developmentProgramSchema,
 } from './idp.schemas.js';
+import multer from 'multer';
 
 export function createIDPRoutes(idpHandlers: IDPHandlers): Router {
   const router = Router();
 
+  // Add multer middleware for handling file uploads (PDF/JSON)
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  });
+
   // Tahap 1: Analisis Kesenjangan Kompetensi
   router.post(
     '/gap-analysis',
-    validateBody(gapAnalysisInputSchema),
+    upload.fields([
+      { name: 'frameworkFile', maxCount: 1 },
+      { name: 'employeeFile', maxCount: 1 },
+    ]),
+    validateBody(gapAnalysisInputSchema.optional()),
     idpHandlers.analyzeCompetencyGaps
   );
 

@@ -79,6 +79,7 @@ export type ImpactMeasurementResult = {
 export type IDPService = {
   // Tahap 1: Analisis Kesenjangan Kompetensi
   analyzeCompetencyGaps: (frameworkData: JobCompetencyFrameworkData, employeeData: EmployeeData, userId: string) => Promise<GapAnalysisResult>;
+  analyzeCompetencyGapsFromFiles: (frameworkFile: Express.Multer.File, employeeFile: Express.Multer.File, userId: string) => Promise<GapAnalysisResult>;
   getGapAnalysisByEmployeeId: (employeeId: string) => Promise<CompetencyGapRecord>;
   
   // Tahap 2: Pemetaan Talenta 9-Box Grid
@@ -219,6 +220,28 @@ export function createIDPService(
         userId,
         employeeName: employeeData.employeeName 
       }, 'Error starting gap analysis');
+      throw error;
+    }
+  }
+
+  async function analyzeCompetencyGapsFromFiles(
+    frameworkFile: Express.Multer.File,
+    employeeFile: Express.Multer.File,
+    userId: string
+  ): Promise<GapAnalysisResult> {
+    try {
+      logger.info({ userId }, 'Parsing uploaded files for gap analysis');
+
+      const frameworkContent = frameworkFile.buffer.toString('utf-8');
+      const employeeContent = employeeFile.buffer.toString('utf-8');
+
+      // Attempt to parse content as JSON. If this fails, let the error propagate.
+      const frameworkData = JSON.parse(frameworkContent) as JobCompetencyFrameworkData;
+      const employeeData = JSON.parse(employeeContent) as EmployeeData;
+
+      return await analyzeCompetencyGaps(frameworkData, employeeData, userId);
+    } catch (error) {
+      logger.error({ error, userId }, 'Error processing gap analysis from uploaded files');
       throw error;
     }
   }
@@ -702,6 +725,7 @@ export function createIDPService(
   return {
     // Tahap 1: Analisis Kesenjangan Kompetensi
     analyzeCompetencyGaps,
+    analyzeCompetencyGapsFromFiles,
     getGapAnalysisByEmployeeId,
     
     // Tahap 2: Pemetaan Talenta 9-Box Grid

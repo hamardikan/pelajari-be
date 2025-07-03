@@ -42,16 +42,32 @@ function createIDPHandlers(dependencies: IDPHandlerDependencies): IDPHandlers {
       // For now, we'll use a dummy user ID. In production, this would come from authentication
       const userId = 'user-123'; // TODO: Get from authentication middleware
       
-      const { frameworkData, employeeData } = req.body;
+      const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+      let result;
 
-      logger.info({ 
-        correlationId, 
-        userId, 
-        employeeName: employeeData.employeeName,
-        jobTitle: frameworkData.jobTitle
-      }, 'Processing gap analysis request');
-      
-      const result = await idpService.analyzeCompetencyGaps(frameworkData, employeeData, userId);
+      if (files?.frameworkFile && files?.employeeFile) {
+        logger.info({ correlationId, userId }, 'Processing gap analysis request (file upload)');
+
+        const frameworkFile = files.frameworkFile[0]!;
+        const employeeFile = files.employeeFile[0]!;
+
+        result = await idpService.analyzeCompetencyGapsFromFiles(
+          frameworkFile,
+          employeeFile,
+          userId
+        );
+      } else {
+        const { frameworkData, employeeData } = req.body;
+
+        logger.info({ 
+          correlationId, 
+          userId, 
+          employeeName: employeeData?.employeeName,
+          jobTitle: frameworkData?.jobTitle
+        }, 'Processing gap analysis request (JSON payload)');
+
+        result = await idpService.analyzeCompetencyGaps(frameworkData, employeeData, userId);
+      }
       
       logger.info({ 
         correlationId, 
@@ -69,7 +85,7 @@ function createIDPHandlers(dependencies: IDPHandlerDependencies): IDPHandlers {
     } catch (error) {
       logger.error({ 
         correlationId, 
-        employeeName: req.body?.employeeData?.employeeName,
+        employeeName: (req.body as any)?.employeeData?.employeeName,
         error: error instanceof Error ? error.message : 'Unknown error'
       }, 'Gap analysis request failed');
       

@@ -263,3 +263,40 @@ npm run db:migrate
 ---
 
 **The server will only start when ALL critical dependencies are healthy!** 🎯 
+
+## 🧑‍💻 Dummy Accounts for Local Testing
+
+These sample accounts can be used immediately after starting the backend (point your requests to `http://localhost:3000`).
+
+| Name | Email | Password | Role | User ID |
+|------|-----------------------|-------------|-------|---------|
+| Alice Admin | alice.admin@pelajari.dev | Admin123! | manager | 19e66cc8-197c-4ab6-91b2-4df6752ee19b |
+| Bob Learner | bob.learner@pelajari.dev | Learner123! | user | 861f6904-f44c-4efc-86cd-9a03247896c3 |
+
+### Register the Dummy Accounts
+
+Run the following commands once the server is up to create the accounts in your local database:
+
+```bash
+# Create Manager account
+curl -X POST http://localhost:3000/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+        "name": "Alice Admin",
+        "email": "alice.admin@pelajari.dev",
+        "password": "Admin123!",
+        "role": "manager"
+      }'
+
+# Create Learner account
+curl -X POST http://localhost:3000/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+        "name": "Bob Learner",
+        "email": "bob.learner@pelajari.dev",
+        "password": "Learner123!",
+        "role": "user"
+      }'
+```
+
+You can now use these credentials to authenticate against protected endpoints, try out the learning modules, or explore the full API showcased in `API_DOCS.md`. 
