@@ -261,6 +261,8 @@ export type CompetencyGapData = {
   employeeName: string;
   jobTitle: string;
   analysisDate: string;
+  kpiScore: number; // Performance score from employee data
+  potentialScore: number; // Assessment/potential score from employee data
   gaps: Array<{
     competency: string;
     category: 'managerial' | 'functional';
@@ -270,7 +272,7 @@ export type CompetencyGapData = {
     description: string;
     priority: 'Low' | 'Medium' | 'High';
   }>;
-  nineBoxClassification?: 'Low Performer' | 'Inconsistent Performer' | 'High Performer' | 'Emerging Talent' | 'Core Player' | 'High Professional' | 'Rising Star' | 'Key Player' | 'Top Talent';
+  nineBoxClassification: 'Low Performer' | 'Inconsistent Performer' | 'High Performer' | 'Emerging Talent' | 'Core Player' | 'High Professional' | 'Rising Star' | 'Key Player' | 'Top Talent';
   overallGapScore: number;
   recommendations: string[];
   createdBy: string;

@@ -186,18 +186,31 @@ async function processGapAnalysis(data: GapAnalysisWorkerData) {
       * analysisDate (YYYY-MM-DD)
       * kpiScore (number 0-100 parsed from the employee document)
       * potentialScore (number 0-100 parsed from the assessment results)
+      * nineBoxClassification (string, calculated based on kpiScore and potentialScore)
       * gaps (array, see below)
       * overallGapScore (number 0-100)
       * recommendations (array of strings)
 
+      **9-Box Classification Rules:**
+      - High Performance (81-100) + High Potential (81-100) = "Top Talent"
+      - High Performance (81-100) + Medium Potential (61-80) = "Key Player"
+      - High Performance (81-100) + Low Potential (0-60) = "High Performer"
+      - Medium Performance (61-80) + High Potential (81-100) = "Rising Star"
+      - Medium Performance (61-80) + Medium Potential (61-80) = "Core Player"
+      - Medium Performance (61-80) + Low Potential (0-60) = "High Professional"
+      - Low Performance (0-60) + High Potential (81-100) = "Emerging Talent"
+      - Low Performance (0-60) + Medium Potential (61-80) = "Inconsistent Performer"
+      - Low Performance (0-60) + Low Potential (0-60) = "Low Performer"
+
       Example structure:
       {
-        "employeeId": "${employeeId ?? 'a-generated-uuid'}",
+        "employeeId": "${employeeId ?? 'EMP_' + Date.now()}",
         "employeeName": "${employeeName}",
         "jobTitle": "${jobTitle}",
         "analysisDate": "2025-07-03",
         "kpiScore": 78,
         "potentialScore": 85,
+        "nineBoxClassification": "Rising Star",
         "gaps": [
           {
             "competency": "Strategic Planning",

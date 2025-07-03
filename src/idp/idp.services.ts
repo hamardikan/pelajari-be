@@ -164,23 +164,18 @@ export function createIDPService(
 
               // ---- START NEW ONE-SHOT LOGIC ----
 
-              // 1. Map to 9-Box Grid
-              const { kpiScore, potentialScore } = message.data;
-              if (typeof kpiScore === 'number' && typeof potentialScore === 'number') {
-                await mapTalentTo9Box(gapAnalysisData.employeeId, kpiScore, potentialScore);
-              }
-
-              // 2. Generate the IDP immediately
+              // 1. Generate the IDP immediately (9-box classification is now included in gap analysis)
               const idpResult = await generateIDP(gapAnalysisData.employeeId, userId);
 
               logger.info({
                   userId,
                   analysisId: newAnalysis.id,
                   idpId: idpResult.idpId,
-                  employeeName: employeeData.employeeName
-              }, 'One-shot process completed: Gap analysis, 9-box, and IDP generated.');
+                  employeeName: employeeData.employeeName,
+                  nineBoxClassification: gapAnalysisData.nineBoxClassification
+              }, 'One-shot process completed: Gap analysis and IDP generated with 9-box classification.');
 
-              // 3. Resolve with both IDs
+              // 2. Resolve with both IDs
               resolve({
                 analysisId: newAnalysis.id,
                 idpId: idpResult.idpId, // Return the new IDP ID
@@ -308,22 +303,17 @@ export function createIDPService(
 
             // ---- START NEW ONE-SHOT LOGIC ----
 
-            // 1. Map to 9-Box Grid
-            const { kpiScore, potentialScore } = message.data;
-            if (typeof kpiScore === 'number' && typeof potentialScore === 'number') {
-              await mapTalentTo9Box(gapAnalysisData.employeeId, kpiScore, potentialScore);
-            }
-
-            // 2. Generate the IDP immediately
+            // 1. Generate the IDP immediately (9-box classification is now included in gap analysis)
             const idpResult = await generateIDP(gapAnalysisData.employeeId, userId);
 
             logger.info({
                 userId,
                 analysisId: newAnalysis.id,
-                idpId: idpResult.idpId
-            }, 'One-shot process completed: Gap analysis, 9-box, and IDP generated.');
+                idpId: idpResult.idpId,
+                nineBoxClassification: gapAnalysisData.nineBoxClassification
+            }, 'One-shot process completed: Gap analysis and IDP generated with 9-box classification.');
 
-            // 3. Resolve with both IDs
+            // 2. Resolve with both IDs
             resolve({
               analysisId: newAnalysis.id,
               idpId: idpResult.idpId, // Return the new IDP ID
@@ -451,9 +441,8 @@ export function createIDPService(
       logger.info({ employeeId, userId }, 'Starting IDP generation');
 
       // Get prerequisite data
-      const [gapAnalysis, userProfile, developmentPrograms] = await Promise.all([
+      const [gapAnalysis, developmentPrograms] = await Promise.all([
         idpRepository.getGapAnalysisByEmployeeId(employeeId, userId),
-        idpRepository.getUserById(employeeId),
         idpRepository.getDevelopmentPrograms()
       ]);
 
@@ -461,13 +450,9 @@ export function createIDPService(
         throw createNotFoundError(`Gap analysis not found for employee ${employeeId}. Please run gap analysis first.`);
       }
 
-      if (!userProfile) {
-        throw createNotFoundError(`User profile not found for employee ${employeeId}`);
-      }
-
-      const nineBoxClassification = userProfile.data.profileData.nineBoxClassification;
+      const nineBoxClassification = gapAnalysis.data.nineBoxClassification;
       if (!nineBoxClassification) {
-        throw createBusinessLogicError(`Nine-Box classification not found for employee ${employeeId}. Please run gap analysis first.`);
+        throw createBusinessLogicError(`Nine-Box classification not found in gap analysis for employee ${employeeId}. Please regenerate gap analysis.`);
       }
 
       // Start worker for AI processing
