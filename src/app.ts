@@ -3,7 +3,8 @@ import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { getEnvironmentConfig } from './config/environment.js';
-import { createDatabaseConnection } from './config/database.js';
+import { createDatabaseConnection, gracefulDatabaseShutdown } from './config/database.js';
+import type { Worker } from 'worker_threads';
 import { createLogger, createRequestLogger, addCorrelationId } from './config/logger.js';
 import { performStartupValidation } from './config/startup.js';
 import { createAuthRepository } from './auth/auth.repositories.js';
@@ -43,6 +44,11 @@ export async function createApp() {
   
   // Initialize database connection
   const db = createDatabaseConnection(config);
+  // Obtain the underlying Postgres client for graceful shutdown later
+  const dbConnection = (db as any).client;
+
+  // Track active worker threads across services
+  const activeWorkers = new Set<Worker>();
   
   // CRITICAL: Validate all dependencies before proceeding
   logger.info('🔍 Performing startup dependency validation...');
@@ -93,13 +99,14 @@ export async function createApp() {
   const documentService = createDocumentService(documentRepository, r2Client, logger);
   const learningService = createLearningService(
     learningRepository,
-    documentService, // NEW: Add document service
+    documentService,
     r2Client,
     openRouterClient,
-    logger
+    logger,
+    activeWorkers
   );
-  const idpService = createIDPService(idpRepository, logger);
-  const roleplayService = createRoleplayService(roleplayRepository, logger);
+  const idpService = createIDPService(idpRepository, logger, activeWorkers);
+  const roleplayService = createRoleplayService(roleplayRepository, logger, activeWorkers);
   
   // Create handlers
   const authHandlers = createAuthHandlers({
@@ -206,6 +213,8 @@ export async function createApp() {
     config,
     logger,
     db,
+    dbConnection,
+    activeWorkers,
     services: {
       authService,
       learningService,
@@ -226,7 +235,7 @@ export async function createApp() {
 
 export async function startServer() {
   try {
-    const { server, config, logger, healthStatus } = await createApp();
+    const { server, config, logger, healthStatus, dbConnection, activeWorkers } = await createApp();
     
     logger.info('🌟 Starting HTTP server...');
     
@@ -243,13 +252,31 @@ export async function startServer() {
       logger.info(`🏥 Health check available at http://localhost:${config.PORT}/health`);
     });
     
-    // Graceful shutdown
-    const shutdown = (signal: string) => {
-      logger.info({ signal }, 'Received shutdown signal');
-      server.close(() => {
-        logger.info('Server closed gracefully');
+    // Graceful shutdown handling
+    const shutdown = async (signal: string) => {
+      logger.info({ signal }, 'Received shutdown signal. Starting graceful shutdown...');
+
+      // Stop accepting new connections
+      server.close(async () => {
+        logger.info('Server closed. No longer accepting new connections.');
+
+        // Terminate all active worker threads
+        logger.info(`Terminating ${activeWorkers.size} active worker threads...`);
+        await Promise.all(Array.from(activeWorkers).map((worker) => worker.terminate()));
+        logger.info('All worker threads terminated.');
+
+        // Close database connections
+        await gracefulDatabaseShutdown(dbConnection);
+
+        logger.info('Graceful shutdown completed. Exiting process.');
         process.exit(0);
       });
+
+      // Force exit if graceful shutdown takes too long
+      setTimeout(() => {
+        logger.error('Graceful shutdown timed out. Forcing exit.');
+        process.exit(1);
+      }, 10000); // 10-second timeout
     };
     
     process.on('SIGTERM', () => shutdown('SIGTERM'));

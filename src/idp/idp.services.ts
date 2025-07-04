@@ -105,7 +105,8 @@ export type IDPService = {
 
 export function createIDPService(
   idpRepository: IDPRepository,
-  logger: Logger
+  logger: Logger,
+  activeWorkers: Set<Worker>
 ): IDPService {
 
   // Tahap 1: Analisis Kesenjangan Kompetensi Otomatis
@@ -133,6 +134,9 @@ export function createIDPService(
           userId 
         },
       });
+
+      // Track worker so it can be terminated during shutdown
+      activeWorkers.add(worker);
 
       return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -209,6 +213,7 @@ export function createIDPService(
         });
 
         worker.on('exit', (code) => {
+          activeWorkers.delete(worker);
           clearTimeout(timeout);
           if (code !== 0) {
             logger.error({ 
@@ -276,6 +281,8 @@ export function createIDPService(
         },
       });
 
+      activeWorkers.add(worker);
+
       // Wrap worker result in promise similar to analyzeCompetencyGaps
       return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -336,6 +343,7 @@ export function createIDPService(
         });
 
         worker.on('exit', (code) => {
+          activeWorkers.delete(worker);
           clearTimeout(timeout);
           if (code !== 0) {
             logger.error({ userId, exitCode: code }, 'Gap analysis worker exited with error');
@@ -469,6 +477,8 @@ export function createIDPService(
         },
       });
 
+      activeWorkers.add(worker);
+
       return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
           worker.terminate();
@@ -588,6 +598,7 @@ export function createIDPService(
         });
 
         worker.on('exit', (code) => {
+          activeWorkers.delete(worker);
           clearTimeout(timeout);
           if (code !== 0) {
             logger.error({ 

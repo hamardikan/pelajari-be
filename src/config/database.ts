@@ -34,8 +34,16 @@ function createDatabaseConnection(config: DatabaseConfig): Database {
   };
 
   const client = createConnectionPool(poolConfig);
-  
-  return drizzle(client, { schema });
+
+  // Attach the underlying postgres client to the Drizzle instance so that
+  // callers (e.g. the HTTP server shutdown routine) can close the connection
+  // pool gracefully.
+  // Use 'any' to avoid type conflicts – we only need the additional `client`
+  // property for internal shutdown handling and will treat it cautiously.
+  const db: any = drizzle(client, { schema });
+  db.client = client;
+
+  return db as Database; // expose both Drizzle API and raw client
 }
 
 async function checkDatabaseHealth(db: Database): Promise<boolean> {

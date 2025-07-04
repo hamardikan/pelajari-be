@@ -117,10 +117,11 @@ function resolveWorkerPath(workerName: string): string {
 
 export function createLearningService(
   learningRepository: LearningRepository,
-  documentService: DocumentService, // NEW: Add document service
+  documentService: DocumentService,
   r2Client: R2Client,
   openRouterClient: OpenRouterClient,
-  logger: Logger
+  logger: Logger,
+  activeWorkers: Set<Worker>
 ): LearningService {
   
   async function createModuleFromFile(userId: string, file: FileUploadData): Promise<ModuleCreationResult> {
@@ -155,6 +156,9 @@ export function createLearningService(
           userId,
         },
       });
+
+      // Track worker so it can be terminated during shutdown
+      activeWorkers.add(worker);
 
       return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -246,6 +250,8 @@ export function createLearningService(
         });
 
         worker.on('exit', (code) => {
+          // Remove from tracking set regardless of outcome
+          activeWorkers.delete(worker);
           clearTimeout(timeout);
           if (code !== 0) {
             logger.error({ 

@@ -117,7 +117,8 @@ export type RoleplayService = {
 
 export function createRoleplayService(
   roleplayRepository: RoleplayRepository,
-  logger: Logger
+  logger: Logger,
+  activeWorkers: Set<Worker>
 ): RoleplayService {
 
   async function getAvailableScenarios(options: ScenariosQuery) {
@@ -209,6 +210,9 @@ export function createRoleplayService(
         },
       });
 
+      // Track worker so it can be terminated during shutdown
+      activeWorkers.add(worker);
+
       return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
           worker.terminate();
@@ -278,6 +282,7 @@ export function createRoleplayService(
         });
 
         worker.on('exit', (code) => {
+          activeWorkers.delete(worker);
           clearTimeout(timeout);
           if (code !== 0) {
             logger.error({ 
@@ -345,6 +350,8 @@ export function createRoleplayService(
           userId,
         },
       });
+
+      activeWorkers.add(worker);
 
       return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -417,6 +424,7 @@ export function createRoleplayService(
         });
 
         worker.on('exit', (code) => {
+          activeWorkers.delete(worker);
           clearTimeout(timeout);
           if (code !== 0) {
             logger.error({ 
@@ -480,6 +488,8 @@ export function createRoleplayService(
           userId,
         },
       });
+
+      activeWorkers.add(worker);
 
       return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -552,6 +562,7 @@ export function createRoleplayService(
         });
 
         worker.on('exit', (code) => {
+          activeWorkers.delete(worker);
           clearTimeout(timeout);
           if (code !== 0) {
             logger.error({ 
@@ -574,19 +585,20 @@ export function createRoleplayService(
     }
   }
 
+  // ------------------------
+  // Session retrieval helpers
+  // ------------------------
+
   async function getSessionDetails(sessionId: string, userId: string): Promise<RoleplaySessionRecord> {
     try {
       logger.debug({ sessionId, userId }, 'Fetching session details');
-      
       const session = await roleplayRepository.getSessionById(sessionId);
       if (!session) {
         throw createNotFoundError(`Roleplay session not found with ID: ${sessionId}`);
       }
-
       if (session.data.userId !== userId) {
         throw createBusinessLogicError('You can only view your own sessions');
       }
-      
       return session;
     } catch (error) {
       logger.error({ error, sessionId, userId }, 'Error fetching session details');
@@ -597,15 +609,8 @@ export function createRoleplayService(
   async function getUserSessionHistory(userId: string, options: UserSessionsQuery) {
     try {
       logger.debug({ userId, options }, 'Fetching user session history');
-      
       const result = await roleplayRepository.getUserSessions(userId, options);
-      
-      logger.info({ 
-        userId,
-        foundSessions: result.sessions.length,
-        total: result.total 
-      }, 'User session history retrieved successfully');
-      
+      logger.info({ userId, foundSessions: result.sessions.length, total: result.total }, 'User session history retrieved successfully');
       return result;
     } catch (error) {
       logger.error({ error, userId, options }, 'Error fetching user session history');
@@ -616,14 +621,11 @@ export function createRoleplayService(
   async function getSessionTranscript(sessionId: string, userId: string) {
     try {
       logger.debug({ sessionId, userId }, 'Fetching session transcript');
-      
       const session = await getSessionDetails(sessionId, userId);
       const scenario = await roleplayRepository.getScenarioById(session.data.scenarioId);
-      
       if (!scenario) {
         throw createNotFoundError('Associated scenario not found');
       }
-
       return {
         messages: session.data.sessionData.messages,
         scenario: {
@@ -667,24 +669,28 @@ export function createRoleplayService(
     }
   }
 
+  // ------------------------
+  // Public API
+  // ------------------------
+
   return {
     // Scenario management
     getAvailableScenarios,
     getScenarioDetails,
-    
+
     // Session management
     startRoleplaySession,
     sendMessage,
     endSession,
     getActiveSession,
-    
+
     // Session retrieval
     getSessionDetails,
     getUserSessionHistory,
     getSessionTranscript,
-    
+
     // Analytics
     getScenarioStats,
     getUserRoleplayStats,
   };
-} 
+} // end createRoleplayService
