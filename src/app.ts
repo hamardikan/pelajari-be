@@ -166,7 +166,25 @@ export async function createApp() {
   
   // Global middleware
   app.use(helmet());
-  app.use(cors());
+  // Configure CORS so only our front-end origins can access the API
+  const allowedOrigins = [
+    'http://localhost:3000', // dev front-end
+    'https://pelajari-mobile-app.pages.dev', // production front-end
+  ];
+
+  app.use(
+    cors({
+      origin: (origin, callback) => {
+        // Allow requests with no origin (e.g. mobile apps, curl)
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.includes(origin)) {
+          return callback(null, true);
+        }
+        return callback(new Error('Not allowed by CORS')); // will be caught by error middleware
+      },
+      credentials: true, // allow cookies / auth headers if you use them
+    })
+  );
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true }));
   app.use(cookieParser());
