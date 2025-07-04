@@ -23,6 +23,8 @@ export type RoleplayHandlers = {
   getSessionDetails: (req: Request, res: Response, next: NextFunction) => void;
   getUserSessions: (req: Request, res: Response, next: NextFunction) => void;
   getSessionTranscript: (req: Request, res: Response, next: NextFunction) => void;
+  // Fetch active session if any
+  getActiveSession: (req: Request, res: Response, next: NextFunction) => void;
   
   // Analytics endpoints
   getScenarioStats: (req: Request, res: Response, next: NextFunction) => void;
@@ -314,6 +316,31 @@ function createRoleplayHandlers(dependencies: RoleplayHandlerDependencies): Role
     }
   }
 
+  async function getActiveSession(req: Request, res: Response, next: NextFunction): Promise<void> {
+    const correlationId = (req as RequestWithCorrelation).correlationId;
+
+    try {
+      const userId = (req as any).user.userId;
+
+      logger.debug({ correlationId, userId }, 'Fetching active roleplay session');
+
+      const session = await roleplayService.getActiveSession(userId);
+
+      res.json({
+        success: true,
+        message: 'Active session retrieved successfully',
+        data: { session },
+        correlationId,
+      });
+    } catch (error) {
+      logger.error({ 
+        correlationId, 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      }, 'Failed to retrieve active session');
+      next(error);
+    }
+  }
+
   async function getScenarioStats(req: Request, res: Response, next: NextFunction): Promise<void> {
     const correlationId = (req as RequestWithCorrelation).correlationId;
     
@@ -383,6 +410,7 @@ function createRoleplayHandlers(dependencies: RoleplayHandlerDependencies): Role
     getSessionDetails: createAsyncErrorWrapper(getSessionDetails),
     getUserSessions: createAsyncErrorWrapper(getUserSessions),
     getSessionTranscript: createAsyncErrorWrapper(getSessionTranscript),
+    getActiveSession: createAsyncErrorWrapper(getActiveSession),
     getScenarioStats: createAsyncErrorWrapper(getScenarioStats),
     getUserStats: createAsyncErrorWrapper(getUserStats),
   };

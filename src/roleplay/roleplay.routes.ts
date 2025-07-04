@@ -53,6 +53,10 @@ export function createRoleplayRoutes(roleplayHandlers: RoleplayHandlers): Router
 
   // Session retrieval endpoints
   router.get(
+    '/sessions/active',
+    roleplayHandlers.getActiveSession
+  );
+  router.get(
     '/sessions/:sessionId',
     validateParams(sessionIdParamsSchema),
     roleplayHandlers.getSessionDetails

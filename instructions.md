@@ -1,89 +1,266 @@
-IDP Module Refactoring InstructionsObjectiveRefactor the Individual Development Plan (IDP) module to create a "one-shot" process. When a user uploads the necessary documents (competency framework and employee data), the backend should automatically:Generate the Gap Analysis.Generate the 9-Box Grid classification.Generate the Individual Development Plan (IDP).This entire process should be triggered by a single API call. The API will then return the IDs of the created Gap Analysis and IDP.1. Modify idp.services.tsThis is the most critical part of the refactoring. The logic needs to be consolidated within the idp.services.ts file.1.1. Update Service and Result TypesIn src/idp/idp.services.ts, modify the GapAnalysisResult type to include the idpId.Change this:export type GapAnalysisResult = {
-  analysisId: string;
-  status: 'processing' | 'completed' | 'failed';
-  message: string;
-};
-To this:export type GapAnalysisResult = {
-  analysisId: string;
-  idpId: string; // Add this
-  status: 'processing' | 'completed' | 'failed';
-  message: string;
-};
-Also, update the analyzeCompetencyGapsFromFiles signature in the IDPService type definition to reflect the new return type.Change this:analyzeCompetencyGapsFromFiles: (frameworkFile: Express.Multer.File, employeeFile: Express.Multer.File, userId: string, employeeId?: string) => Promise<GapAnalysisResult>;
-(The old definition might just return Promise<GapAnalysisResult> without the idpId)1.2. Orchestrate the One-Shot Flow in analyzeCompetencyGapsFromFilesModify the analyzeCompetencyGapsFromFiles function to chain the required service calls.Inside the worker.on('message', async (message) => { ... }) callback, after successfully creating the gap analysis record (newAnalysis), add the logic to map the 9-box and generate the IDP.Location: src/idp/idp.services.ts -> analyzeCompetencyGapsFromFiles -> worker.on('message', ...)Refactoring Logic:// ... inside the worker.on('message', async (message) => {
-// ... after checking if message.success is true
+-----
 
-try {
-    // This part already exists
-    const gapAnalysisData: CompetencyGapData = {
-      ...message.data,
-      employeeId: employeeId || message.data.employeeId,
-      createdBy: userId,
-    };
+# Instruction Manual: Peningkatan Fitur "Lanjutkan Sesi" (Backend)
 
-    // Store in DB (This also exists)
-    const newAnalysis = await idpRepository.createGapAnalysis(gapAnalysisData);
+**Tujuan Utama:** Meningkatkan *flow experience* pada fitur **Roleplay** dan **Learning** dengan memungkinkan pengguna untuk melanjutkan sesi yang sedang berlangsung (`ongoing session`) secara *seamless*.
 
-    // ---- START NEW LOGIC ----
+**Analisis Konteks:** Berdasarkan kode yang ada, backend sudah memiliki dasar yang kuat untuk melacak status sesi.
 
-    // 1. Map to 9-Box Grid
-    const { kpiScore, potentialScore } = message.data;
-    if (typeof kpiScore === 'number' && typeof potentialScore === 'number') {
-      await mapTalentTo9Box(gapAnalysisData.employeeId, kpiScore, potentialScore);
+  * **Roleplay:** Tabel `roleplaySessions` memiliki kolom `data` dengan status (`active`, `completed`, `abandoned`). Layanan `roleplay.services.ts` sudah memiliki logika untuk memeriksa sesi aktif (`getActiveUserSession`).
+  * **Learning:** Tabel `userModuleProgress` melacak status modul (`in_progress`, `completed`) dan `currentSectionIndex`.
+
+Instruksi berikut akan fokus pada penyempurnaan logika yang ada dan menambahkan endpoint API baru untuk mendukung alur "lanjutkan" secara eksplisit.
+
+-----
+
+## Tahap 1: Penyempurnaan Fitur Roleplay
+
+Tujuannya adalah mengubah alur "memulai sesi" agar jika sesi sudah aktif, sistem akan mengembalikan sesi tersebut alih-alih memberikan galat.
+
+### Langkah 1.1: Modifikasi `roleplay.services.ts`
+
+Saat ini, fungsi `startRoleplaySession` memberikan galat jika pengguna sudah memiliki sesi aktif. Ubah perilaku ini untuk mengembalikan sesi yang aktif tersebut.
+
+1.  **Buka file:** `src/roleplay/roleplay.services.ts`.
+
+2.  **Temukan fungsi:** `startRoleplaySession(userId: string, scenarioId: string)`.
+
+3.  **Ubah Logika Pengecekan Sesi Aktif:**
+
+      * Cari blok kode yang memeriksa `activeSession`.
+      * Alih-alih melempar `createBusinessLogicError`, ubah blok tersebut untuk mengembalikan data sesi yang sudah ada beserta pesan awalnya.
+
+    **Contoh Perubahan:**
+
+    ```typescript
+    // Inside startRoleplaySession function
+
+    // Check if user already has an active session
+    const activeSession = await roleplayRepository.getActiveUserSession(userId);
+    if (activeSession) {
+      logger.info({ userId, sessionId: activeSession.id }, 'User has an ongoing session, returning it.');
+      
+      // Get the first message of the existing session
+      const initialMessage = activeSession.data.sessionData.messages[0]?.content || 'Selamat datang kembali!';
+
+      return {
+        sessionId: activeSession.id,
+        initialMessage: initialMessage,
+        status: 'active',
+        isOngoing: true // Tambahkan flag untuk frontend
+      };
     }
 
-    // 2. Generate the IDP immediately
-    const idpResult = await generateIDP(gapAnalysisData.employeeId, userId);
+    // ... (sisa logika untuk membuat sesi baru tetap sama)
+    ```
 
-    logger.info({
-        userId,
-        analysisId: newAnalysis.id,
-        idpId: idpResult.idpId
-    }, 'One-shot process completed: Gap analysis, 9-box, and IDP generated.');
+### Langkah 1.2: Buat Endpoint API Baru untuk Mengambil Sesi Aktif
 
-    // 3. Resolve with both IDs
-    resolve({
-      analysisId: newAnalysis.id,
-      idpId: idpResult.idpId, // Return the new IDP ID
-      status: 'completed',
-      message: 'Gap analysis and IDP generation completed successfully',
-    });
+Buat endpoint khusus agar frontend dapat memeriksa status sesi aktif tanpa harus mencoba memulai sesi baru.
 
-    // ---- END NEW LOGIC ----
+1.  **Buka file:** `src/roleplay/roleplay.handlers.ts`.
+2.  **Tambahkan Handler Baru:**
+    ```typescript
+    async function getActiveSession(req: Request, res: Response, next: NextFunction): Promise<void> {
+      const correlationId = (req as RequestWithCorrelation).correlationId;
+      try {
+        const userId = (req as any).user.userId;
+        logger.debug({ correlationId, userId }, 'Fetching active roleplay session');
+        
+        const session = await roleplayService.getActiveSession(userId); // Anda perlu membuat fungsi ini di service
+        
+        res.json({
+          success: true,
+          message: 'Active session retrieved successfully',
+          data: { session },
+          correlationId,
+        });
+      } catch (error) {
+        // ... (error handling)
+      }
+    }
 
-} catch (dbError) {
-    logger.error({ userId, error: dbError }, 'Failed during one-shot gap analysis and IDP generation');
-    reject(dbError);
-}
+    // Ekspor handler baru
+    // ... addTo exports: getActiveSession: createAsyncErrorWrapper(getActiveSession)
+    ```
+3.  **Tambahkan Service Baru di `roleplay.services.ts`:**
+    ```typescript
+    // Tambahkan ini ke dalam interface RoleplayService
+    getActiveSession: (userId: string) => Promise<RoleplaySessionRecord | null>;
 
-// ... rest of the function
-1.3. Update analyzeCompetencyGaps (JSON input version)Apply the same orchestration logic to the analyzeCompetencyGaps function, which handles JSON input instead of files. This ensures both entry points for gap analysis follow the new one-shot flow.Location: src/idp/idp.services.ts -> analyzeCompetencyGaps -> worker.on('message', ...)2. Update idp.handlers.tsThe analyzeCompetencyGaps handler now receives an object containing both analysisId and idpId. Ensure the response sent back to the client reflects this.Location: src/idp/idp.handlers.ts -> analyzeCompetencyGapsChange this:// Old logging and response
-logger.info({
-  correlationId,
-  userId,
-  analysisId: result.analysisId,
-  status: result.status
-}, 'Gap analysis request processed');
+    // Tambahkan implementasi fungsi di dalam createRoleplayService
+    async function getActiveSession(userId: string): Promise<RoleplaySessionRecord | null> {
+      try {
+        logger.debug({ userId }, 'Fetching active session for user');
+        return await roleplayRepository.getActiveUserSession(userId);
+      } catch (error) {
+        logger.error({ error, userId }, 'Error fetching active session');
+        throw error;
+      }
+    }
+    // ... tambahkan getActiveSession ke object yang di-return
+    ```
+4.  **Tambahkan Route Baru di `src/roleplay/roleplay.routes.ts`:**
+    ```typescript
+    // Tambahkan route ini sebelum route dinamis lainnya
+    router.get(
+      '/sessions/active',
+      roleplayHandlers.getActiveSession
+    );
+    ```
 
-res.status(201).json({
-  success: true,
-  message: 'Gap analysis initiated successfully',
-  data: result,
-  correlationId,
-});
-To this:// New logging and response
-logger.info({
-  correlationId,
-  userId,
-  analysisId: result.analysisId,
-  idpId: result.idpId, // Log the new ID
-  status: result.status
-}, 'Gap analysis and IDP generation request processed');
+-----
 
-res.status(201).json({
-  success: true,
-  message: 'Gap analysis and IDP generation initiated successfully',
-  data: result, // result now contains both IDs
-  correlationId,
-});
-3. Verify Other FilesNo changes should be necessary in the following files, but it's good practice to verify:idp.routes.ts: The route POST /gap-analysis remains the same. No changes needed.idp.repositories.ts: The repository methods for creating individual records (createGapAnalysis, createIDP, etc.) are still valid and will be called by the service layer. No changes needed.idp.worker.ts: The worker's responsibility is only to perform the AI analysis for a specific task (e.g., gap analysis). It should not be changed. The orchestration happens in the service layer.After applying these changes, the backend will support the new one-shot IDP generation flow as requested.
+## Tahap 2: Penyempurnaan Fitur Learning
+
+Tujuannya adalah memperkaya data progres dan menyediakan endpoint untuk mengambil semua modul yang sedang dikerjakan.
+
+### Langkah 2.1: Perbarui Skema Database untuk Progres
+
+Tambahkan *timestamp* `lastAccessedAt` untuk mengetahui kapan terakhir kali pengguna membuka sebuah modul.
+
+1.  **Buka file:** `src/db/schema.ts`.
+2.  **Temukan tipe:** `UserModuleProgressData`.
+3.  **Tambahkan field baru** di dalam objek `progress`:
+    ```typescript
+    export type UserModuleProgressData = {
+      // ... (fields lain)
+      progress: {
+        // ... (fields lain)
+        startedAt: string;
+        completedAt?: string;
+        timeSpent: number;
+        lastAccessedAt?: string; // <-- TAMBAHKAN INI
+        sectionProgress: Array<{
+          // ...
+        }>;
+      };
+    };
+    ```
+
+### Langkah 2.2: Perbarui Logika Service dan Repository
+
+Pastikan *timestamp* `lastAccessedAt` diperbarui setiap kali ada interaksi.
+
+1.  **Buka file:** `src/learning/learning.services.ts`.
+
+2.  **Modifikasi `updateProgress`:**
+
+      * Setiap kali fungsi ini dipanggil, perbarui `lastAccessedAt`.
+
+    <!-- end list -->
+
+    ```typescript
+    // Di dalam fungsi updateProgress
+    const updatedProgressData: Partial<UserModuleProgressData> = {
+      progress: {
+        ...existingProgress.data.progress,
+        lastAccessedAt: new Date().toISOString(), // <-- TAMBAHKAN INI
+        // ... (sisa logika)
+      },
+    };
+    ```
+
+3.  **Modifikasi `startModule`:**
+
+      * Saat memulai modul baru atau mengembalikan progres yang sudah ada, set `lastAccessedAt`.
+
+    <!-- end list -->
+
+    ```typescript
+    // Di dalam fungsi startModule
+    // Jika existingProgress ada:
+    // Panggil learningRepository.updateUserProgress untuk memperbarui lastAccessedAt
+    if (existingProgress) {
+        const updatedData: Partial<UserModuleProgressData> = {
+            progress: {
+                ...existingProgress.data.progress,
+                lastAccessedAt: new Date().toISOString()
+            }
+        };
+        return learningRepository.updateUserProgress(existingProgress.id, updatedData);
+    }
+
+    // Jika membuat progress baru:
+    const progressData: UserModuleProgressData = {
+      // ...
+      progress: {
+        // ...
+        startedAt: new Date().toISOString(),
+        lastAccessedAt: new Date().toISOString(), // <-- TAMBAHKAN INI
+        // ...
+      },
+    };
+    ```
+
+    *Anda mungkin perlu menyesuaikan implementasi `updateUserProgress` di `learning.repositories.ts` untuk mendukung pembaruan parsial pada data JSONB dengan benar.*
+
+### Langkah 2.3: Buat Endpoint untuk Modul "In Progress"
+
+Buat endpoint API khusus untuk mengambil daftar semua modul yang sedang berlangsung, diurutkan berdasarkan yang terakhir diakses.
+
+1.  **Buka file:** `src/learning/learning.handlers.ts`.
+
+2.  **Tambahkan Handler Baru:**
+
+    ```typescript
+    async function getOngoingModules(req: Request, res: Response, next: NextFunction): Promise<void> {
+        const correlationId = (req as RequestWithCorrelation).correlationId;
+        try {
+            const userId = (req as any).user.userId;
+            const progressList = await learningService.getOngoingModules(userId);
+            res.json({
+                success: true,
+                message: 'Ongoing modules retrieved successfully',
+                data: { progressList, count: progressList.length },
+                correlationId,
+            });
+        } catch (error) {
+            // ... (error handling)
+        }
+    }
+    // ... ekspor handler baru
+    ```
+
+3.  **Tambahkan Service Baru di `src/learning/learning.services.ts`:**
+
+    ```typescript
+    // Tambahkan ini ke interface LearningService
+    getOngoingModules: (userId: string) => Promise<UserProgressRecord[]>;
+
+    // Implementasi di createLearningService
+    async function getOngoingModules(userId: string): Promise<UserProgressRecord[]> {
+        return learningRepository.getUserProgressList(userId, { status: 'in_progress' });
+    }
+    // ... tambahkan ke object yang di-return
+    ```
+
+4.  **Perbarui `learning.repositories.ts`:**
+
+      * Pastikan `getUserProgressList` dapat mengurutkan hasilnya berdasarkan `lastAccessedAt`.
+
+    <!-- end list -->
+
+    ```typescript
+    // Di dalam getUserProgressList
+    // ...
+    const result = await db
+      .select()
+      .from(userModuleProgress)
+      .where(and(...whereConditions))
+      .orderBy(sql`${userModuleProgress.data}->'progress'->>'lastAccessedAt' DESC NULLS LAST`); // <-- UBAH ORDER BY
+    // ...
+    ```
+
+5.  **Tambahkan Route Baru di `src/learning/learning.routes.ts`:**
+
+    ```typescript
+    router.get(
+      '/progress/ongoing',
+      learningHandlers.getOngoingModules
+    );
+    ```
+
+-----
+
+**Instruksi Selesai.** Setelah menerapkan perubahan ini, backend akan sepenuhnya siap untuk mendukung alur "lanjutkan sesi" yang lebih baik untuk kedua fitur.

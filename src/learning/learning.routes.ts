@@ -76,6 +76,11 @@ export function createLearningRoutes(learningHandlers: LearningHandlers): Router
   );
 
   router.get(
+    '/progress/ongoing',
+    learningHandlers.getOngoingModules
+  );
+
+  router.get(
     '/progress',
     validateQuery(userProgressQuerySchema),
     learningHandlers.getUserProgressList

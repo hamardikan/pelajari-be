@@ -236,6 +236,7 @@ export type UserModuleProgressData = {
     startedAt: string;
     completedAt?: string;
     timeSpent: number;
+    lastAccessedAt?: string;
     sectionProgress: Array<{
       sectionIndex: number;
       completed: boolean;

@@ -351,7 +351,7 @@ export function createLearningRepository(db: Database, logger: Logger): Learning
         .select()
         .from(userModuleProgress)
         .where(and(...whereConditions))
-        .orderBy(sql`${userModuleProgress.updatedAt} DESC`);
+        .orderBy(sql`${userModuleProgress.data}->'progress'->>'lastAccessedAt' DESC NULLS LAST`);
 
       const progressList = result.map(progress => ({
         id: progress.id,

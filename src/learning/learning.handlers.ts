@@ -21,6 +21,7 @@ export type LearningHandlers = {
   updateProgress: (req: Request, res: Response, next: NextFunction) => void;
   getUserProgress: (req: Request, res: Response, next: NextFunction) => void;
   getUserProgressList: (req: Request, res: Response, next: NextFunction) => void;
+  getOngoingModules: (req: Request, res: Response, next: NextFunction) => void;
   
   // Assessment and evaluation
   submitAssessment: (req: Request, res: Response, next: NextFunction) => void;
@@ -327,6 +328,31 @@ function createLearningHandlers(dependencies: LearningHandlerDependencies): Lear
     }
   }
 
+  async function getOngoingModules(req: Request, res: Response, next: NextFunction): Promise<void> {
+    const correlationId = (req as RequestWithCorrelation).correlationId;
+
+    try {
+      const userId = (req as any).user.userId;
+
+      logger.debug({ correlationId, userId }, 'Fetching ongoing modules');
+
+      const progressList = await learningService.getOngoingModules(userId);
+
+      res.json({
+        success: true,
+        message: 'Ongoing modules retrieved successfully',
+        data: { progressList, count: progressList.length },
+        correlationId,
+      });
+    } catch (error) {
+      logger.error({ 
+        correlationId, 
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }, 'Ongoing modules retrieval failed');
+      next(error);
+    }
+  }
+
   async function submitAssessment(req: Request, res: Response, next: NextFunction): Promise<void> {
     const correlationId = (req as RequestWithCorrelation).correlationId;
     
@@ -479,6 +505,7 @@ function createLearningHandlers(dependencies: LearningHandlerDependencies): Lear
     updateProgress: createAsyncErrorWrapper(updateProgress),
     getUserProgress: createAsyncErrorWrapper(getUserProgress),
     getUserProgressList: createAsyncErrorWrapper(getUserProgressList),
+    getOngoingModules: createAsyncErrorWrapper(getOngoingModules),
     submitAssessment: createAsyncErrorWrapper(submitAssessment),
     submitEvaluation: createAsyncErrorWrapper(submitEvaluation),
     getModuleStats: createAsyncErrorWrapper(getModuleStats),

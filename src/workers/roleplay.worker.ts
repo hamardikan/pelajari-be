@@ -69,6 +69,7 @@ const resilienceConfig = createResilienceConfig({
     resetTimeout: 60000,
     minimumHalfOpenRequests: 1,
     name: 'roleplay-ai-processing',
+    volumeThreshold: 5,
   },
   deadLetterQueue: {
     enabled: false,
@@ -163,9 +164,17 @@ INSTRUCTIONS:
     ];
 
     const result = await resilientAIProcessing('initial-message', messages, 0.8);
-    
+
     if (!result.success) {
-      throw result.error || new Error('Initial message generation failed');
+      logger.warn({
+        sessionId: data.sessionId,
+        scenarioTitle: scenario.title,
+        error: result.error?.message,
+      }, 'AI generation failed, falling back to default welcome message');
+
+      return {
+        initialMessage: 'Halo! Mari kita mulai sesi roleplay ini. Silakan sampaikan sesuatu untuk memulai percakapan.',
+      };
     }
 
     logger.info({ 

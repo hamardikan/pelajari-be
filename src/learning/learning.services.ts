@@ -68,6 +68,8 @@ export type LearningService = {
   updateProgress: (userId: string, data: UpdateProgressData) => Promise<UserProgressRecord>;
   getUserProgress: (userId: string, moduleId: string) => Promise<UserProgressRecord>;
   getUserProgressList: (userId: string, options: UserProgressQuery) => Promise<UserProgressRecord[]>;
+  // Quick retrieval helpers
+  getOngoingModules: (userId: string) => Promise<UserProgressRecord[]>;
   
   // Assessment and evaluation
   submitAssessment: (userId: string, data: SubmitAssessmentData) => Promise<AssessmentResult>;
@@ -297,7 +299,13 @@ export function createLearningService(
     // Check if user already has progress for this module
     const existingProgress = await learningRepository.getUserProgress(userId, moduleId);
     if (existingProgress) {
-      return existingProgress;
+      const updatedData: Partial<UserModuleProgressData> = {
+        progress: {
+          ...existingProgress.data.progress,
+          lastAccessedAt: new Date().toISOString(),
+        },
+      };
+      return learningRepository.updateUserProgress(existingProgress.id, updatedData);
     }
 
     // Create new progress record
@@ -309,6 +317,7 @@ export function createLearningService(
         completionPercentage: 0,
         currentSectionIndex: 0,
         startedAt: new Date().toISOString(),
+        lastAccessedAt: new Date().toISOString(),
         timeSpent: 0,
         sectionProgress: [],
       },
@@ -328,6 +337,7 @@ export function createLearningService(
     const updatedProgressData: Partial<UserModuleProgressData> = {
       progress: {
         ...existingProgress.data.progress,
+        lastAccessedAt: new Date().toISOString(),
         ...(data.completed !== undefined && { 
           status: data.completed ? 'completed' : existingProgress.data.progress.status,
           completedAt: data.completed ? new Date().toISOString() : existingProgress.data.progress.completedAt 
@@ -364,6 +374,10 @@ export function createLearningService(
 
   async function getUserProgressList(userId: string, options: UserProgressQuery): Promise<UserProgressRecord[]> {
     return learningRepository.getUserProgressList(userId, options);
+  }
+
+  async function getOngoingModules(userId: string): Promise<UserProgressRecord[]> {
+    return learningRepository.getUserProgressList(userId, { status: 'in_progress' });
   }
 
   async function submitAssessment(userId: string, data: SubmitAssessmentData): Promise<AssessmentResult> {
@@ -482,6 +496,7 @@ export function createLearningService(
     updateProgress,
     getUserProgress,
     getUserProgressList,
+    getOngoingModules,
     submitAssessment,
     submitEvaluation,
     getModuleStats,

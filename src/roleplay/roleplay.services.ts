@@ -39,6 +39,8 @@ export type SessionStartResult = {
   sessionId: string;
   initialMessage: string;
   status: 'active';
+  /** Indicates the session was already ongoing rather than newly created */
+  isOngoing?: boolean;
 };
 
 export type MessageResponse = {
@@ -74,6 +76,8 @@ export type RoleplayService = {
   startRoleplaySession: (userId: string, scenarioId: string) => Promise<SessionStartResult>;
   sendMessage: (sessionId: string, userId: string, message: string) => Promise<MessageResponse>;
   endSession: (sessionId: string, userId: string) => Promise<SessionEndResult>;
+  // Quick lookup for any active session a user might have
+  getActiveSession: (userId: string) => Promise<RoleplaySessionRecord | null>;
   
   // Session retrieval
   getSessionDetails: (sessionId: string, userId: string) => Promise<RoleplaySessionRecord>;
@@ -161,7 +165,16 @@ export function createRoleplayService(
       // Check if user already has an active session
       const activeSession = await roleplayRepository.getActiveUserSession(userId);
       if (activeSession) {
-        throw createBusinessLogicError('You already have an active roleplay session. Please complete or abandon it before starting a new one.');
+        logger.info({ userId, sessionId: activeSession.id }, 'User has an ongoing session, returning it.');
+
+        const initialMessage = activeSession.data.sessionData.messages[0]?.content || 'Selamat datang kembali!';
+
+        return {
+          sessionId: activeSession.id,
+          initialMessage,
+          status: 'active',
+          isOngoing: true,
+        };
       }
 
       // Get scenario details
@@ -624,6 +637,16 @@ export function createRoleplayService(
     }
   }
 
+  async function getActiveSession(userId: string): Promise<RoleplaySessionRecord | null> {
+    try {
+      logger.debug({ userId }, 'Fetching active session for user');
+      return await roleplayRepository.getActiveUserSession(userId);
+    } catch (error) {
+      logger.error({ error, userId }, 'Error fetching active session');
+      throw error;
+    }
+  }
+
   async function getScenarioStats(scenarioId: string) {
     try {
       logger.debug({ scenarioId }, 'Fetching scenario statistics');
@@ -653,6 +676,7 @@ export function createRoleplayService(
     startRoleplaySession,
     sendMessage,
     endSession,
+    getActiveSession,
     
     // Session retrieval
     getSessionDetails,

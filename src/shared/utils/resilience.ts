@@ -19,6 +19,8 @@ export type CircuitBreakerOptions = {
   errorThresholdPercentage: number;
   resetTimeout: number;
   minimumHalfOpenRequests: number;
+  /** Minimum number of requests before error percentage is calculated. */
+  volumeThreshold?: number;
   name: string;
 };
 
@@ -73,6 +75,7 @@ function createCircuitBreaker<T extends unknown[], R>(
       timeout: options.timeout,
       errorThresholdPercentage: options.errorThresholdPercentage,
       resetTimeout: options.resetTimeout,
+      volumeThreshold: options.volumeThreshold ?? 5,
       name: options.name,
     });
 
@@ -283,6 +286,7 @@ function createResilienceConfig(options: Partial<ResilienceConfig> = {}): Resili
       errorThresholdPercentage: 50,
       resetTimeout: 30000,
       minimumHalfOpenRequests: 3,
+      volumeThreshold: 5,
       name: 'default',
       ...options.circuitBreaker,
     },
